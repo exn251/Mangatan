@@ -1,3 +1,9 @@
+## Personal AI generated changes done to PC script and server.py:
+Editable OCR boxes, changes to text save to ocr cache, anki image export verifies its using the right image, anki export button always visible, hides suwayomi html that impeded yomitan and added text replacements for special characters like ? and ! for aesthetic purposes.
+
+Only tested with single page reading layout.
+
+Original Readme below:
 ## Please add \n to nothing in your yomitan replacement patterns under Translation for now
 Welcome! This guide provides the steps to get your OCR server running for a seamless reading experience.
 
