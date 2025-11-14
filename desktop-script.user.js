@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Automatic Content OCR (PC Hybrid Engine) - Modifier Key Merging - OCR Error Resilience
+// @name         Mangatan - Custom Build - All in One
 // @namespace    http://tampermonkey.net/
-// @version      24.5.26-PC-FocusColor-StableHover-OCRErrorResilience
-// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow.
-// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience
+// @version      24.5.27-PC-FocusColor-StableHover-OCRErrorResilience-Editable-ImageExportFix-AltBlank-PunctuationFix-MergeFix
+// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes alt attribute blanking, numbered container hiding, and duplicate punctuation removal. Fixed merge selection reset on mouse leave.
+// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Alt Blanking & Punctuation Fix & Merge Stability
 // @match        *://127.0.0.1*/*
 // @match        *://suwayomi*/*
 // @exclude      *://suwayomi.org/*
@@ -14,9 +14,8 @@
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @connect      localhost
-// @downloadURL  https://github.com/kaihouguide/Mangatan/raw/main/desktop-script-server-merge-context.user.js
-// @updateURL    https://github.com/kaihouguide/Mangatan/raw/main/desktop-script-server-merge-context.user.js
 // ==/UserScript==
+
 (function() {
     'use strict';
     // --- Global State and Settings ---
@@ -41,7 +40,7 @@
         focusFontColor: 'default'
     };
     let debugLog = [];
-    const SETTINGS_KEY = 'gemini_ocr_settings_v24_pc_focus_color_ocr_error_resilience'; // Updated key
+    const SETTINGS_KEY = 'gemini_ocr_settings_v24_pc_focus_color_ocr_error_resilience_editable'; // Updated key
     const ocrDataCache = new WeakMap();
     const managedElements = new Map(), managedContainers = new Map(), attachedAttributeObservers = new WeakMap();
     let activeSiteConfig = null, measurementSpan = null, activeImageForExport = null, activeOverlay = null;
@@ -56,6 +55,27 @@
         purple: { accent: '155,89,182', background: '245,229,255' }, turquoise: { accent: '26,188,156', background: '229,255,250' },
         pink: { accent: '255,77,222', background: '255,229,255' }, grey: { accent: '149,165,166', background: '229,236,236' }
     };
+
+    // --- Editable Text Box State ---
+    const editableState = {
+        activeEditBox: null,
+        originalText: null,
+        originalStyles: null
+    };
+
+    // --- Blank Image Alt Attributes & Hide Numbered Container Functionality ---
+    const blankAltConfig = {
+        containerSelector: '.MuiBox-root.muiltr-k008qs',
+        blankAltObserver: null,
+        hideNumberedObserver: null
+    };
+
+    // --- OCR Duplicate Punctuation Remover Functionality ---
+    const punctuationConfig = {
+        originalSetAttribute: null,
+        originalSetTextContent: null
+    };
+
     const logDebug = (message) => {
         if (!settings.debugMode) return;
         const timestamp = new Date().toLocaleTimeString(), logEntry = `[${timestamp}] ${message}`;
@@ -63,6 +83,140 @@
         debugLog.push(logEntry);
         document.dispatchEvent(new CustomEvent('ocr-log-update'));
     };
+
+    // --- Blank Image Alt Attributes Functions ---
+    function blankImageAlts() {
+        const container = document.querySelector(blankAltConfig.containerSelector);
+
+        if (container) {
+            const images = container.querySelectorAll('img');
+            images.forEach(img => {
+                img.setAttribute('alt', '');
+                logDebug('Blanked alt attribute for an image: ' + img.src);
+            });
+
+            if (images.length === 0) {
+                logDebug('No images found within the specified container.');
+            }
+        } else {
+            logDebug('Specified container not found: ' + blankAltConfig.containerSelector);
+        }
+    }
+
+    function hideNumberedContainers() {
+        const stacks = document.querySelectorAll('div.MuiStack-root');
+
+        stacks.forEach(stack => {
+            const ariaLabeledBoxes = stack.querySelectorAll('[aria-label]');
+            let numericCount = 0;
+            ariaLabeledBoxes.forEach(box => {
+                const label = box.getAttribute('aria-label');
+                if (label && /^\d+$/.test(label)) {
+                    numericCount++;
+                }
+            });
+
+            if (numericCount >= 1) {
+                stack.style.display = 'none';
+                logDebug('Hidden numbered container with ' + numericCount + ' numbered boxes');
+            }
+        });
+    }
+
+    function setupBlankAltObservers() {
+        // Main observer for initial container detection
+        blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
+            const container = document.querySelector(blankAltConfig.containerSelector);
+
+            if (container) {
+                blankImageAlts();
+                observer.disconnect();
+
+                // Set up observer for dynamic images
+                const imageObserver = new MutationObserver((mutations) => {
+                    mutations.forEach(mutation => {
+                        mutation.addedNodes.forEach(node => {
+                            if (node.nodeType === 1) {
+                                if (node.tagName === 'IMG') {
+                                    node.setAttribute('alt', '');
+                                    logDebug('Blanked alt for new image: ' + node.src);
+                                }
+                                node.querySelectorAll('img').forEach(img => {
+                                    img.setAttribute('alt', '');
+                                    logDebug('Blanked alt for nested new image: ' + img.src);
+                                });
+                            }
+                        });
+                    });
+                });
+
+                imageObserver.observe(container, { childList: true, subtree: true });
+            }
+        });
+
+        // Observer for hiding numbered containers (runs continuously)
+        blankAltConfig.hideNumberedObserver = new MutationObserver(() => {
+            hideNumberedContainers();
+        });
+
+        // Start observers
+        blankAltConfig.blankAltObserver.observe(document.body, { childList: true, subtree: true });
+        blankAltConfig.hideNumberedObserver.observe(document.body, { childList: true, subtree: true });
+
+        // Run on load
+        window.addEventListener('load', () => {
+            blankImageAlts();
+            hideNumberedContainers();
+        });
+
+        logDebug("Blank Image Alt Attributes & Hide Numbered Container functionality initialized");
+    }
+
+    // --- OCR Duplicate Punctuation Remover Functions ---
+    function cleanPunctuation(text) {
+        if (!text) return text;
+
+        // Replace consecutive duplicates of ? or !
+        text = text.replace(/!!+/g, '!');
+        text = text.replace(/\?\?+/g, '?');
+        text = text.replace(/\?!/g, '');
+        text = text.replace(/!\?/g, '');
+        text = text.replace(/\u2026+/g, '\u2026');
+        text = text.replace(/\(/g, '\u23DC');
+        text = text.replace(/\)/g, '\u23DD');
+        text = text.replace(/!:/g, '!');
+
+        return text;
+    }
+
+    function setupPunctuationRemover() {
+        // Store original methods to avoid conflicts
+        punctuationConfig.originalSetAttribute = Element.prototype.setAttribute;
+        punctuationConfig.originalSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
+
+        // Intercept setAttribute for OCR text boxes
+        Element.prototype.setAttribute = function(name, value) {
+            if (this.classList && this.classList.contains('gemini-ocr-text-box') &&
+                (name === 'data-full-text' || name === 'data-original-text')) {
+                value = cleanPunctuation(value);
+            }
+            return punctuationConfig.originalSetAttribute.call(this, name, value);
+        };
+
+        // Intercept textContent changes for OCR text boxes
+        Object.defineProperty(Node.prototype, 'textContent', {
+            set: function(value) {
+                if (this.classList && this.classList.contains('gemini-ocr-text-box')) {
+                    value = cleanPunctuation(value);
+                }
+                return punctuationConfig.originalSetTextContent.call(this, value);
+            },
+            get: Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get
+        });
+
+        logDebug("OCR Duplicate Punctuation Remover: Active");
+    }
+
     // --- [ROBUST] Navigation Handling & State Reset ---
     function fullCleanupAndReset() {
         logDebug("NAVIGATION DETECTED: Starting full cleanup and reset.");
@@ -74,7 +228,37 @@
             resizeObserver.unobserve(img); intersectionObserver.unobserve(img);
         }
         managedElements.clear(); managedContainers.clear(); visibleImages.clear(); hideActiveOverlay();
+
+        // FIX: Clear the active image reference on navigation
+        activeImageForExport = null;
+
+        // Clear editable state
+        editableState.activeEditBox = null;
+        editableState.originalText = null;
+        editableState.originalStyles = null;
+
+        // Clear merge state
+        mergeState.anchorBox = null;
         logDebug("All state maps cleared. Cleanup complete.");
+    }
+
+    // NEW: Periodic cleanup of disconnected images
+    function cleanupDisconnectedImages() {
+        let cleaned = 0;
+        for (const [img, state] of managedElements.entries()) {
+            if (!img.isConnected) {
+                if (state.overlay?.isConnected) state.overlay.remove();
+                if (state.hideTimer) clearTimeout(state.hideTimer);
+                resizeObserver.unobserve(img);
+                intersectionObserver.unobserve(img);
+                managedElements.delete(img);
+                visibleImages.delete(img);
+                cleaned++;
+            }
+        }
+        if (cleaned > 0) {
+            logDebug(`Cleaned up ${cleaned} disconnected images from managedElements`);
+        }
     }
     function reinitializeScript() { logDebug("Re-initializing scanners."); activateScanner(); observeChapters(); }
     function setupNavigationObserver() {
@@ -214,12 +398,12 @@
             measurementSpan.style.whiteSpace = isMerged ? 'normal' : 'nowrap';
             // Temporarily set text content for measurement
             measurementSpan.textContent = text;
-            // Apply line breaks for merged text during measurement if horizontal
+            // Apply line breaks for merged text during measurement
             if (isMerged && !isVerticalSearch) {
-                 measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
+                 measurementSpan.innerHTML = text.replace(/[\n\u200B]/g, "<br>");
             } else if (isMerged && isVerticalSearch) {
                  // For vertical merged text, keep it as potentially multi-line
-                 measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
+                 measurementSpan.innerHTML = text.replace(/[\n\u200B]/g, "<br>");
             } else {
                  // For non-merged text, just use textContent, but allow wrapping in measurement
                  measurementSpan.textContent = text;
@@ -227,11 +411,13 @@
                  measurementSpan.appendChild(document.createTextNode(text));
             }
 
-            let low = 1, high = 200, bestSize = 1;
+            let low = 5, high = 200, bestSize = 5;  // Start low at 5px to skip tiny extremes
             while (low <= high) {
                 const mid = Math.floor((low + high) / 2);
                 if (mid <= 0) break;
                 measurementSpan.style.fontSize = `${mid}px`;
+                // Force reflow for accurate measurement
+                void measurementSpan.offsetHeight;
 
                 // Check if the measured width and height fit within the available space
                 const fitsWidth = measurementSpan.offsetWidth <= availableWidth;
@@ -275,11 +461,14 @@
         // --- OCR ERROR RESILIENCE CHECK ---
         // If the calculated font size is very small, it might indicate a mismatch
         // between the OCR text length and the box size (e.g., OCR duplication).
-        const minReadableFontSize = 8; // Minimum font size for readability
+        const minReadableFontSize = 10; // Bumped for bolder text, fewer triggers
         let effectiveFinalFontSize = finalFontSize;
 
         if (effectiveFinalFontSize < minReadableFontSize) {
-            logDebug(`Potentially problematic OCR text detected for box: "${text.substring(0, 20)}..." (Calculated size: ${finalFontSize}, enforced min: ${minReadableFontSize})`);
+            // Conditional log: Only for long text in tiny boxes (real OCR errors, not normal small panels)
+            if (text.length > 10 && effectiveFinalFontSize < 4) {
+                logDebug(`Potentially problematic OCR text detected for box: "${text.substring(0, 20)}..." (Calculated size: ${finalFontSize}, enforced min: ${minReadableFontSize})`);
+            }
             effectiveFinalFontSize = minReadableFontSize; // Enforce minimum for visibility
             // Optional: Add a visual cue to the box indicating potential OCR error
             // box.style.outline = "1px dashed orange"; // Example visual indicator
@@ -296,7 +485,7 @@
         // --- Apply styles for display *after* font size calculation ---
         // This ensures the final display respects the intended line breaks for the *actual* box size
         if (isMerged) {
-            box.style.whiteSpace = 'normal'; // Allow wrapping for merged text
+            box.style.whiteSpace = 'pre-line'; // Use pre-line to preserve line breaks but collapse other whitespace
             box.style.textAlign = 'start';   // Align for merged text
         } else {
              // Non-merged text defaults to nowrap (original intent)
@@ -314,90 +503,316 @@
         for (const box of boxes) calculateAndApplyStylesForSingleBox(box, imgRect);
         measurementSpan.style.writingMode = 'horizontal-tb';
     }
+
     function showOverlay(overlay, image) {
         if (activeOverlay && activeOverlay !== overlay) hideActiveOverlay();
         activeOverlay = overlay;
-        activeImageForExport = image;
+
+        // CRITICAL: Always update activeImageForExport when showing, and ensure it's from the current URL
+        const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+        const imageChapterMatch = image.src.match(/\/manga\/\d+\/chapter\/\d+/);
+
+        // Only set if the image is from the current chapter
+        if (currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0]) {
+            activeImageForExport = image;
+            logDebug(`Active image set to: ${image.src.slice(-50)}`);
+        } else {
+            logDebug(`Skipping image from different chapter: ${image.src.slice(-50)}`);
+        }
+
         overlay.classList.add('is-focused');
+
+        // MERGE FIX: Re-apply selected class if anchor exists for this overlay
+        if (mergeState.anchorBox && overlay.contains(mergeState.anchorBox)) {
+            mergeState.anchorBox.classList.add('selected-for-merge');
+        }
+
         const rect = image.getBoundingClientRect();
         calculateAndApplyOptimalStyles_Optimized(overlay, rect);
     }
+
     function hideActiveOverlay() {
         if (!activeOverlay) return;
         const overlayToHide = activeOverlay;
         overlayToHide.classList.remove('is-focused', 'has-manual-highlight');
-        overlayToHide.querySelectorAll('.manual-highlight, .selected-for-merge').forEach(b => b.classList.remove('manual-highlight', 'selected-for-merge'));
-        mergeState.anchorBox = null;
-        if (activeImageForExport && managedElements.get(activeImageForExport)?.overlay === overlayToHide) {
-             activeImageForExport = null;
-        }
+
+        // MERGE FIX: Only remove manual-highlight; preserve selected-for-merge during merge mode
+        overlayToHide.querySelectorAll('.manual-highlight').forEach(b => b.classList.remove('manual-highlight'));
+
+        // Do NOT remove selected-for-merge here - let click handler manage it
+        // Only clear anchor on explicit cancel (click outside) or merge success
+
         activeOverlay = null;
     }
+
     function isModifierPressed(event, keyName) { if (!keyName) return false; const k = keyName.toLowerCase(); return (k === 'ctrl' || k === 'control') ? event.ctrlKey : (k === 'alt') ? event.altKey : (k === 'shift') ? event.shiftKey : (k === 'meta' || k === 'win' || k === 'cmd') ? event.metaKey : false; }
     function handleBoxDelete(boxElement, sourceImage) {
-        logDebug(`Deleting box: "${boxElement.dataset.fullText}"`);
-        const data = ocrDataCache.get(sourceImage);
-        if (!data) return;
-        const updatedData = data.filter((item, index) => index !== boxElement._ocrDataIndex);
-        ocrDataCache.set(sourceImage, updatedData);
-        boxElement.remove();
+    logDebug(`Deleting box: "${boxElement.dataset.fullText}"`);
+    const data = ocrDataCache.get(sourceImage);
+    if (!data) return;
+    const updatedData = data.filter((item, index) => index !== boxElement._ocrDataIndex);
+    ocrDataCache.set(sourceImage, updatedData);
+    boxElement.remove();
+
+    // MERGE FIX: If deleted was anchor, clear state
+    if (mergeState.anchorBox === boxElement) {
+        mergeState.anchorBox = null;
     }
+
+    // *** ADD THESE LINES AT THE END ***
+    // Sync changes to server
+    syncCacheToServer(sourceImage).then(success => {
+        if (!success) {
+            logDebug("Warning: Failed to sync deletion to server cache");
+        }
+    });
+}
     function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
-        logDebug(`Merging "${sourceBox.dataset.fullText}" into "${targetBox.dataset.fullText}"`);
-        const originalData = ocrDataCache.get(sourceImage);
-        if (!originalData) return;
-        const targetData = targetBox._ocrData;
-        const sourceData = sourceBox._ocrData;
-        const combinedText = (targetData.text || '') + (settings.addSpaceOnMerge ? ' ' : "\u200B") + (sourceData.text || '');
-        const tb = targetData.tightBoundingBox;
-        const sb = sourceData.tightBoundingBox;
-        const newRight = Math.max(tb.x + tb.width, sb.x + sb.width);
-        const newBottom = Math.max(tb.y + tb.height, sb.y + sb.height);
-        const newBoundingBox = { x: Math.min(tb.x, sb.x), y: Math.min(tb.y, sb.y), width: 0, height: 0 };
-        newBoundingBox.width = newRight - newBoundingBox.x;
-        newBoundingBox.height = newBottom - newBoundingBox.y;
-        const areBothVertical = targetBox.classList.contains('gemini-ocr-text-vertical') && sourceBox.classList.contains('gemini-ocr-text-vertical');
-        const newOcrItem = { text: combinedText, tightBoundingBox: newBoundingBox, forcedOrientation: areBothVertical ? 'vertical' : 'auto', isMerged: true };
-        const indicesToDelete = new Set([targetBox._ocrDataIndex, sourceBox._ocrDataIndex]);
-        const newData = originalData.filter((item, index) => !indicesToDelete.has(index));
-        newData.push(newOcrItem);
-        ocrDataCache.set(sourceImage, newData);
-        targetBox.remove();
-        sourceBox.remove();
-        const newBoxElement = document.createElement('div');
-        newBoxElement.className = 'gemini-ocr-text-box';
-        newBoxElement.innerHTML = newOcrItem.text.replace(/\u200B/g, "<br>");
-        newBoxElement.dataset.fullText = newOcrItem.text;
-        newBoxElement._ocrData = newOcrItem;
-        newBoxElement._ocrDataIndex = newData.length - 1;
-        newBoxElement.style.whiteSpace = 'normal';
-        newBoxElement.style.textAlign = 'start';
-        Object.assign(newBoxElement.style, { left: `${newOcrItem.tightBoundingBox.x*100}%`, top: `${newOcrItem.tightBoundingBox.y*100}%`, width: `${newOcrItem.tightBoundingBox.width*100}%`, height: `${newOcrItem.tightBoundingBox.height*100}%` });
-        overlay.appendChild(newBoxElement);
-        calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
-        mergeState.anchorBox = newBoxElement;
-        newBoxElement.classList.add('selected-for-merge');
+    logDebug(`Merging "${sourceBox.dataset.fullText}" into "${targetBox.dataset.fullText}"`);
+    const originalData = ocrDataCache.get(sourceImage);
+    if (!originalData) return;
+    const targetData = targetBox._ocrData;
+    const sourceData = sourceBox._ocrData;
+    const combinedText = (targetData.text || '') + (settings.addSpaceOnMerge ? ' ' : "\u200B") + (sourceData.text || '');
+    const tb = targetData.tightBoundingBox;
+    const sb = sourceData.tightBoundingBox;
+    const newRight = Math.max(tb.x + tb.width, sb.x + sb.width);
+    const newBottom = Math.max(tb.y + tb.height, sb.y + sb.height);
+    const newBoundingBox = { x: Math.min(tb.x, sb.x), y: Math.min(tb.y, sb.y), width: 0, height: 0 };
+    newBoundingBox.width = newRight - newBoundingBox.x;
+    newBoundingBox.height = newBottom - newBoundingBox.y;
+    const areBothVertical = targetBox.classList.contains('gemini-ocr-text-vertical') && sourceBox.classList.contains('gemini-ocr-text-vertical');
+    const newOcrItem = { text: combinedText, tightBoundingBox: newBoundingBox, forcedOrientation: areBothVertical ? 'vertical' : 'auto', isMerged: true };
+    const indicesToDelete = new Set([targetBox._ocrDataIndex, sourceBox._ocrDataIndex]);
+    const newData = originalData.filter((item, index) => !indicesToDelete.has(index));
+    newData.push(newOcrItem);
+    ocrDataCache.set(sourceImage, newData);
+    targetBox.remove();
+    sourceBox.remove();
+
+    const newBoxElement = document.createElement('div');
+    newBoxElement.className = 'gemini-ocr-text-box';
+    newBoxElement.textContent = newOcrItem.text.replace(/\u200B/g, "\n");
+    newBoxElement.dataset.fullText = newOcrItem.text;
+    newBoxElement.dataset.originalText = newOcrItem.text;
+    newBoxElement._ocrData = newOcrItem;
+    newBoxElement._ocrDataIndex = newData.length - 1;
+    newBoxElement.style.whiteSpace = 'pre-line';
+    newBoxElement.style.textAlign = 'start';
+    Object.assign(newBoxElement.style, {
+        left: `${newOcrItem.tightBoundingBox.x * 100}%`,
+        top: `${newOcrItem.tightBoundingBox.y * 100}%`,
+        width: `${newOcrItem.tightBoundingBox.width * 100}%`,
+        height: `${newOcrItem.tightBoundingBox.height * 100}%`
+    });
+    overlay.appendChild(newBoxElement);
+    calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
+
+    mergeState.anchorBox = newBoxElement;
+    newBoxElement.classList.add('selected-for-merge');
+
+    // *** ADD THESE LINES AT THE END ***
+    // Sync changes to server
+    syncCacheToServer(sourceImage).then(success => {
+        if (!success) {
+            logDebug("Warning: Failed to sync merge changes to server cache");
+        }
+    });
+}
+
+    // --- Editable Text Box Functions ---
+
+    function enterEditMode(textBox, sourceImage) {
+        if (editableState.activeEditBox) return; // Prevent multiple edits
+
+        // MERGE FIX: Exit merge mode if editing
+        if (mergeState.anchorBox) {
+            mergeState.anchorBox.classList.remove('selected-for-merge');
+            mergeState.anchorBox = null;
+        }
+
+        editableState.activeEditBox = textBox;
+        editableState.originalText = textBox.dataset.fullText;
+
+        // Store original styles
+        editableState.originalStyles = {
+            background: textBox.style.background,
+            color: textBox.style.color,
+            zIndex: textBox.style.zIndex,
+            whiteSpace: textBox.style.whiteSpace,
+            textAlign: textBox.style.textAlign,
+            overflow: textBox.style.overflow,
+            padding: textBox.style.padding
+        };
+
+        // Make the box editable using contenteditable
+        textBox.contentEditable = 'true';
+        textBox.classList.add('editing');
+
+        // Apply editing styles
+        Object.assign(textBox.style, {
+            background: 'rgba(255, 255, 255, 0.95)',
+            color: '#000',
+            zIndex: '10000',
+            border: '2px solid #3498db',
+            borderRadius: '4px',
+            whiteSpace: 'pre-wrap', // Allow wrapping and preserve whitespace
+            textAlign: 'left',      // Left align for easier editing
+            overflow: 'auto',       // Allow scrolling if text overflows during edit
+            padding: '4px'
+        });
+
+        // Focus and select all text
+        textBox.focus();
+        const range = document.createRange();
+        range.selectNodeContents(textBox);
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+
+        // Handle save on blur or Enter (without shift for new line)
+        const saveEdit = () => {
+            const newText = textBox.textContent.trim().replace(/\n+/g, '\n'); // Normalize line breaks
+            if (newText && newText !== editableState.originalText) {
+                saveTextChanges(textBox, sourceImage, newText);
+            }
+            exitEditMode(textBox);
+        };
+
+        const cancelEdit = () => {
+            exitEditMode(textBox, true); // Pass true to restore original text
+        };
+
+        // Event listeners
+        textBox.addEventListener('blur', saveEdit, { once: true });
+        textBox.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { // Enter without shift saves
+                e.preventDefault();
+                saveEdit();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                cancelEdit();
+            }
+        });
+
+        // Prevent the overlay from hiding while editing
+        const state = managedElements.get(sourceImage);
+        if (state && state.hideTimer) {
+            clearTimeout(state.hideTimer);
+            state.hideTimer = null;
+        }
     }
+
+    function exitEditMode(textBox, restoreOriginal = false) {
+        if (!textBox) return;
+
+        // Restore original text if canceling
+        if (restoreOriginal) {
+            textBox.textContent = editableState.originalText.replace(/\u200B/g, "\n");
+        }
+
+        // Remove editing attributes and styles
+        textBox.contentEditable = 'false';
+        textBox.classList.remove('editing');
+        textBox.style.border = '';
+        textBox.style.borderRadius = '';
+        textBox.style.overflow = '';
+
+        // Restore original styles
+        if (editableState.originalStyles) {
+            Object.assign(textBox.style, editableState.originalStyles);
+        }
+
+        // Clear state
+        editableState.activeEditBox = null;
+        editableState.originalText = null;
+        editableState.originalStyles = null;
+    }
+
+    function saveTextChanges(textBox, sourceImage, newText) {
+    // Normalize newlines to \u200B for consistency with merge logic
+    const normalizedText = newText.replace(/\n/g, '\u200B');
+
+    // Update dataset and OCR data
+    textBox.dataset.fullText = normalizedText;
+
+    const data = ocrDataCache.get(sourceImage);
+    if (data && Array.isArray(data)) {
+        const index = textBox._ocrDataIndex;
+        if (data[index]) {
+            data[index].text = normalizedText;
+            // Mark as merged if it contains line breaks (now \u200B)
+            data[index].isMerged = normalizedText.includes('\u200B');
+            ocrDataCache.set(sourceImage, data);
+
+            // Apply merged styles if necessary
+            if (data[index].isMerged) {
+                textBox.style.whiteSpace = 'pre-line';
+                textBox.style.textAlign = 'start';
+            } else {
+                textBox.style.whiteSpace = 'nowrap';
+                textBox.style.textAlign = 'center';
+            }
+
+            logDebug(`Updated OCR text for box ${index}: "${normalizedText.substring(0, 50)}${normalizedText.length > 50 ? '...' : ''}"`);
+        }
+    }
+
+    // Set display text with \n for visual breaks
+    textBox.textContent = normalizedText.replace(/\u200B/g, '\n');
+
+    // Recalculate styles for the updated text
+    const imgRect = sourceImage.getBoundingClientRect();
+    calculateAndApplyStylesForSingleBox(textBox, imgRect);
+
+    // *** ADD THESE LINES AT THE END ***
+    // Sync changes to server
+    syncCacheToServer(sourceImage).then(success => {
+        if (!success) {
+            logDebug("Warning: Failed to sync edit changes to server cache");
+        }
+    });
+}
+
     function displayOcrResults(targetImg) {
         if (managedElements.has(targetImg)) return;
         const data = ocrDataCache.get(targetImg);
         if (!data || data === 'pending' || !Array.isArray(data)) return;
+
         const overlay = document.createElement('div');
         overlay.className = `gemini-ocr-decoupled-overlay interaction-mode-${settings.interactionMode}`;
         overlay.classList.toggle('solo-hover-mode', settings.soloHoverMode);
+
         data.forEach((item, index) => {
             const ocrBox = document.createElement('div');
             ocrBox.className = 'gemini-ocr-text-box';
             ocrBox.dataset.fullText = item.text;
-            ocrBox._ocrData = item; ocrBox._ocrDataIndex = index;
-            ocrBox.innerHTML = item.text.replace(/\u200B/g, "<br>");
-            if (item.isMerged) { ocrBox.style.whiteSpace = 'normal'; ocrBox.style.textAlign = 'start'; }
-            Object.assign(ocrBox.style, { left: `${item.tightBoundingBox.x*100}%`, top: `${item.tightBoundingBox.y*100}%`, width: `${item.tightBoundingBox.width*100}%`, height: `${item.tightBoundingBox.height*100}%` });
+            ocrBox.dataset.originalText = item.text;
+            ocrBox._ocrData = item;
+            ocrBox._ocrDataIndex = index;
+
+            // Use text content instead of innerHTML for proper line break handling
+            ocrBox.textContent = item.text.replace(/\u200B/g, "\n");
+
+            if (item.isMerged) {
+                ocrBox.style.whiteSpace = 'pre-line'; // Use pre-line to preserve line breaks but collapse other whitespace
+                ocrBox.style.textAlign = 'start';
+            }
+
+            Object.assign(ocrBox.style, {
+                left: `${item.tightBoundingBox.x*100}%`,
+                top: `${item.tightBoundingBox.y*100}%`,
+                width: `${item.tightBoundingBox.width*100}%`,
+                height: `${item.tightBoundingBox.height*100}%`
+            });
+
             overlay.appendChild(ocrBox);
         });
+
         document.body.appendChild(overlay);
         const state = { overlay, lastWidth: 0, lastHeight: 0, image: targetImg, hideTimer: null };
         managedElements.set(targetImg, state);
+
         // --- STABILITY FIX: Reworked hover logic ---
         const handleMouseEnter = () => {
             if (state.hideTimer) {
@@ -406,39 +821,66 @@
             }
             showOverlay(overlay, targetImg);
         };
+
+        // MERGE FIX: Updated mouseleave to prevent hiding during merge
         const handleMouseLeave = () => {
-            // This check prevents weirdness when quickly moving between adjacent images.
             if (activeOverlay && activeOverlay !== overlay) return;
             state.hideTimer = setTimeout(() => {
-                // Final check: Only hide if it's still the active overlay and not pinned by merging.
-                if (activeOverlay === overlay && !overlay.querySelector('.selected-for-merge')) {
+                // Only hide if no merge anchor set and not editing
+                if (activeOverlay === overlay && mergeState.anchorBox === null && !editableState.activeEditBox) {
                     hideActiveOverlay();
                 }
                 state.hideTimer = null;
-            }, 300); // 300ms delay allows user to move from image to overlay without it vanishing.
+            }, 300);
         };
+
         targetImg.addEventListener('mouseenter', handleMouseEnter);
         overlay.addEventListener('mouseenter', handleMouseEnter);
         targetImg.addEventListener('mouseleave', handleMouseLeave);
         overlay.addEventListener('mouseleave', handleMouseLeave);
-        // End of stability fix
+
+        // Add double-click event listener for editing
+        overlay.addEventListener('dblclick', (e) => {
+            const clickedBox = e.target.closest('.gemini-ocr-text-box');
+            if (clickedBox && !editableState.activeEditBox) {
+                e.stopPropagation();
+                enterEditMode(clickedBox, targetImg);
+            }
+        });
+
+        // MERGE FIX: Enhanced click handler for better reliability
         overlay.addEventListener('click', (e) => {
+            // If we're currently editing, don't process normal clicks
+            if (editableState.activeEditBox) return;
+
             const clickedBox = e.target.closest('.gemini-ocr-text-box');
             if (!clickedBox) {
+                // Click outside: Cancel merge
                 overlay.querySelectorAll('.manual-highlight, .selected-for-merge').forEach(b => b.classList.remove('manual-highlight', 'selected-for-merge'));
                 overlay.classList.remove('has-manual-highlight');
                 mergeState.anchorBox = null;
                 return;
             }
             e.stopPropagation();
+            e.preventDefault(); // Prevent any bubbling issues
+
             if (isModifierPressed(e, settings.deleteModifierKey)) {
                 handleBoxDelete(clickedBox, targetImg);
             } else if (isModifierPressed(e, settings.mergeModifierKey)) {
                 if (!mergeState.anchorBox) {
+                    // Select anchor
                     mergeState.anchorBox = clickedBox;
                     clickedBox.classList.add('selected-for-merge');
+                    logDebug('Merge anchor selected: ' + clickedBox.dataset.fullText);
                 } else if (mergeState.anchorBox !== clickedBox) {
+                    // Merge
                     handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
+                    logDebug('Merge completed');
+                } else {
+                    // Clicked same box: Deselect
+                    clickedBox.classList.remove('selected-for-merge');
+                    mergeState.anchorBox = null;
+                    logDebug('Merge anchor deselected');
                 }
             } else if (settings.interactionMode === 'click') {
                 overlay.querySelectorAll('.manual-highlight').forEach(b => b.classList.remove('manual-highlight'));
@@ -446,12 +888,448 @@
                 overlay.classList.add('has-manual-highlight');
             }
         });
+
         resizeObserver.observe(targetImg);
         intersectionObserver.observe(targetImg);
     }
+
     // --- Anki & Batch Processing ---
-    async function ankiConnectRequest(action, params = {}) { return new Promise((resolve, reject) => { GM_xmlhttpRequest({ method: 'POST', url: settings.ankiConnectUrl, data: JSON.stringify({ action, version: 6, params }), headers: { 'Content-Type': 'application/json; charset=UTF-8' }, timeout: 15000, onload: (res) => { try { const data = JSON.parse(res.responseText); if (data.error) reject(new Error(data.error)); else resolve(data.result); } catch (e) { reject(new Error('Failed to parse Anki-Connect response.')); } }, onerror: () => reject(new Error('Connection to Anki-Connect failed.')), ontimeout: () => reject(new Error('Anki-Connect request timed out.')) }); }); }
-	async function exportImageToAnki(targetImg){if(!settings.ankiImageField){alert('Anki Image Field is not set.');return false;}if(!targetImg?.complete||!targetImg.naturalHeight){alert('Anki Export Failed: Image not valid.');return false;}return new Promise((resolve)=>{const overlay=document.createElement('div');Object.assign(overlay.style,{position:'fixed',top:0,left:0,width:'100vw',height:'100vh',background:'rgba(0,0,0,0.5)',cursor:'default',zIndex:9999999});document.body.appendChild(overlay);const cropBox=document.createElement('div');Object.assign(cropBox.style,{position:'absolute',border:'2px solid #00bfff',background:'rgba(0,191,255,0.2)',aspectRatio:'5 / 4',width:'300px',height:'240px',top:'50%',left:'50%',transform:'translate(-50%, -50%)',boxSizing:'border-box',cursor:'move'});overlay.appendChild(cropBox);const corners=['nw','ne','sw','se'];corners.forEach(c=>{const h=document.createElement('div');Object.assign(h.style,{position:'absolute',width:'12px',height:'12px',background:'#00bfff',borderRadius:'50%',cursor:`${c}-resize`});if(c.includes('n'))h.style.top='-6px';if(c.includes('s'))h.style.bottom='-6px';if(c.includes('w'))h.style.left='-6px';if(c.includes('e'))h.style.right='-6px';h.dataset.corner=c;cropBox.appendChild(h);});const confirm=document.createElement('button');confirm.textContent='✅ Confirm Crop';Object.assign(confirm.style,{position:'fixed',bottom:'80px',left:'50%',transform:'translateX(-60%)',padding:'10px 20px',fontSize:'16px',background:'#2ecc71',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',zIndex:10000000});const cancel=document.createElement('button');cancel.textContent='❌ Cancel';Object.assign(cancel.style,{position:'fixed',bottom:'80px',left:'50%',transform:'translateX(60%)',padding:'10px 20px',fontSize:'16px',background:'#c0392b',color:'#fff',border:'none',borderRadius:'6px',cursor:'pointer',zIndex:10000000});document.body.appendChild(confirm);document.body.appendChild(cancel);let dragOffsetX=0,dragOffsetY=0,isDragging=false,isResizing=false;let startX=0,startY=0,corner='';let startWidth=0,startHeight=0,startLeft=0,startTop=0;cropBox.addEventListener('mousedown',e=>{if(e.target.dataset.corner)return;const r=cropBox.getBoundingClientRect();dragOffsetX=e.clientX-r.left;dragOffsetY=e.clientY-r.top;isDragging=true;e.preventDefault();});cropBox.querySelectorAll('[data-corner]').forEach(h=>{h.addEventListener('mousedown',e=>{e.stopPropagation();isResizing=true;corner=e.target.dataset.corner;startX=e.clientX;startY=e.clientY;const rect=cropBox.getBoundingClientRect();startWidth=rect.width;startHeight=rect.height;startLeft=rect.left;startTop=rect.top;e.preventDefault();});});const mouseMoveHandler=(e)=>{if(isDragging){const newX=e.clientX-dragOffsetX;const newY=e.clientY-dragOffsetY;const maxX=window.innerWidth-cropBox.offsetWidth;const maxY=window.innerHeight-cropBox.offsetHeight;cropBox.style.left=Math.max(0,Math.min(newX,maxX))+'px';cropBox.style.top=Math.max(0,Math.min(newY,maxY))+'px';cropBox.style.transform='none';}else if(isResizing){const deltaX=e.clientX-startX;const deltaY=e.clientY-startY;let newWidth=startWidth;let newHeight=startHeight;let newLeft=startLeft;let newTop=startTop;if(corner.includes('e')){newWidth=Math.max(50,startWidth+deltaX);}if(corner.includes('w')){newWidth=Math.max(50,startWidth-deltaX);newLeft=startLeft+deltaX;}if(corner.includes('s')){newHeight=Math.max(50,startHeight+deltaY);}if(corner.includes('n')){newHeight=Math.max(50,startHeight-deltaY);newTop=startTop+deltaY;}const targetRatio=5/4;if(corner==='ne'||corner==='se'||corner==='nw'||corner==='sw'){const currentRatio=newWidth/newHeight;if(Math.abs(currentRatio-targetRatio)>0.01){newHeight=newWidth/targetRatio;if(corner.includes('n')){newTop=startTop+(startHeight-newHeight);}}}if(corner.includes('w')&&newLeft<0){newWidth+=newLeft;newLeft=0;}if(corner.includes('n')&&newTop<0){newHeight+=newTop;newTop=0;}if(corner.includes('e')&&newLeft+newWidth>window.innerWidth){newWidth=window.innerWidth-newLeft;}if(corner.includes('s')&&newTop+newHeight>window.innerHeight){newHeight=window.innerHeight-newTop;}cropBox.style.width=newWidth+'px';cropBox.style.height=newHeight+'px';cropBox.style.left=newLeft+'px';cropBox.style.top=newTop+'px';cropBox.style.transform='none';}};const mouseUpHandler=()=>{isDragging=false;isResizing=false;};document.addEventListener('mousemove',mouseMoveHandler);document.addEventListener('mouseup',mouseUpHandler);confirm.addEventListener('click',async()=>{const cropRect=cropBox.getBoundingClientRect();const imgRect=targetImg.getBoundingClientRect();const scaleX=targetImg.naturalWidth/targetImg.offsetWidth;const scaleY=targetImg.naturalHeight/targetImg.offsetHeight;const cropData={x:Math.max(0,(cropRect.left-imgRect.left)*scaleX),y:Math.max(0,(cropRect.top-imgRect.top)*scaleY),width:Math.min(cropRect.width*scaleX,targetImg.naturalWidth),height:Math.min(cropRect.height*scaleY,targetImg.naturalHeight)};const canvas=document.createElement('canvas');canvas.width=cropData.width;canvas.height=cropData.height;const ctx=canvas.getContext('2d');ctx.drawImage(targetImg,cropData.x,cropData.y,cropData.width,cropData.height,0,0,cropData.width,cropData.height);try{canvas.toBlob(async(blob)=>{if(!blob){alert('Failed to crop image');cleanup();resolve(false);return;}const reader=new FileReader();reader.onload=async()=>{const base64Data=reader.result.split(',')[1];const filename=`screenshot_${Date.now()}.png`;try{await ankiConnectRequest('storeMediaFile',{filename:filename,data:base64Data});const notes=await ankiConnectRequest('findNotes',{query:'added:1'});if(!notes||notes.length===0){throw new Error('No recently added cards found. Create one first.');}const lastNoteId=notes.sort((a,b)=>b-a)[0];await ankiConnectRequest('updateNoteFields',{note:{id:lastNoteId,fields:{[settings.ankiImageField]:`<img src="${filename}">`}}});cleanup();resolve(true);}catch(error){console.error('Anki error:',error);alert('Error sending to Anki: '+error.message);cleanup();resolve(false);}};reader.readAsDataURL(blob);},'image/png',0.95);}catch(error){console.error('Cropping error:',error);alert('Error cropping image: '+error.message);cleanup();resolve(false);}});cancel.addEventListener('click',()=>{cleanup();resolve(false);});function cleanup(){document.removeEventListener('mousemove',mouseMoveHandler);document.removeEventListener('mouseup',mouseUpHandler);if(overlay.parentNode)document.body.removeChild(overlay);if(confirm.parentNode)document.body.removeChild(confirm);if(cancel.parentNode)document.body.removeChild(cancel);}});}
+    async function ankiConnectRequest(action, params = {}) {
+    return new Promise((resolve, reject) => {
+        const requestData = {
+            action: action,
+            version: 6,
+            params: params
+        };
+
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: settings.ankiConnectUrl,
+            data: JSON.stringify(requestData),
+            headers: {
+                'Content-Type': 'application/json; charset=UTF-8'
+            },
+            timeout: 15000,
+            onload: (response) => {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (data.error) {
+                        reject(new Error(data.error));
+                    } else {
+                        resolve(data.result);
+                    }
+                } catch (error) {
+                    reject(new Error('Failed to parse Anki-Connect response.'));
+                }
+            },
+            onerror: () => {
+                reject(new Error('Connection to Anki-Connect failed.'));
+            },
+            ontimeout: () => {
+                reject(new Error('Anki-Connect request timed out.'));
+            }
+        });
+    });
+}
+
+/**
+ * Exports an image to Anki with interactive cropping
+ * @param {HTMLImageElement} targetImg - The image to export
+ * @returns {Promise<boolean>} True if successful, false otherwise
+ */
+async function exportImageToAnki(targetImg) {
+    // Validation
+    if (!settings.ankiImageField) {
+        alert('Anki Image Field is not set.');
+        return false;
+    }
+
+    if (!targetImg?.complete || !targetImg.naturalHeight) {
+        alert('Anki Export Failed: Image not valid.');
+        return false;
+    }
+
+    return new Promise((resolve) => {
+        // Create overlay
+        const overlay = document.createElement('div');
+        Object.assign(overlay.style, {
+            position: 'fixed',
+            top: '0',
+            left: '0',
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0, 0, 0, 0.5)',
+            cursor: 'default',
+            zIndex: '9999999'
+        });
+        document.body.appendChild(overlay);
+
+        // Create crop box with 5:4 aspect ratio
+        const ASPECT_RATIO = 5 / 4;
+        const cropBox = document.createElement('div');
+        Object.assign(cropBox.style, {
+            position: 'absolute',
+            border: '2px solid #00bfff',
+            background: 'rgba(0, 191, 255, 0.2)',
+            aspectRatio: '5 / 4',
+            width: '300px',
+            height: '240px',
+            top: '50%',
+            left: '50%',
+            transform: 'translate(-50%, -50%)',
+            boxSizing: 'border-box',
+            cursor: 'move'
+        });
+        overlay.appendChild(cropBox);
+
+        // Add corner handles
+        const corners = ['nw', 'ne', 'sw', 'se'];
+        corners.forEach(corner => {
+            const handle = document.createElement('div');
+            Object.assign(handle.style, {
+                position: 'absolute',
+                width: '12px',
+                height: '12px',
+                background: '#00bfff',
+                borderRadius: '50%',
+                cursor: `${corner}-resize`
+            });
+
+            // Position handles
+            if (corner.includes('n')) handle.style.top = '-6px';
+            if (corner.includes('s')) handle.style.bottom = '-6px';
+            if (corner.includes('w')) handle.style.left = '-6px';
+            if (corner.includes('e')) handle.style.right = '-6px';
+
+            handle.dataset.corner = corner;
+            cropBox.appendChild(handle);
+        });
+
+        // Create control buttons
+        const confirmButton = createButton('✅ Confirm Crop', '#2ecc71', '50%', '-60%');
+        const cancelButton = createButton('❌ Cancel', '#c0392b', '50%', '60%');
+
+        document.body.appendChild(confirmButton);
+        document.body.appendChild(cancelButton);
+
+        // Drag and resize state
+        const dragState = {
+            isDragging: false,
+            isResizing: false,
+            dragOffsetX: 0,
+            dragOffsetY: 0,
+            startX: 0,
+            startY: 0,
+            corner: '',
+            startWidth: 0,
+            startHeight: 0,
+            startLeft: 0,
+            startTop: 0
+        };
+
+        // Event handlers
+        cropBox.addEventListener('mousedown', startDragging);
+        cropBox.querySelectorAll('[data-corner]').forEach(handle => {
+            handle.addEventListener('mousedown', startResizing);
+        });
+
+        document.addEventListener('mousemove', handleMouseMove);
+        document.addEventListener('mouseup', handleMouseUp);
+
+        confirmButton.addEventListener('click', handleConfirm);
+        cancelButton.addEventListener('click', handleCancel);
+
+        // Helper function to create buttons
+        function createButton(text, bgColor, leftOffset, transformX) {
+            const button = document.createElement('button');
+            button.textContent = text;
+            Object.assign(button.style, {
+                position: 'fixed',
+                bottom: '80px',
+                left: leftOffset,
+                transform: `translateX(${transformX})`,
+                padding: '10px 20px',
+                fontSize: '16px',
+                background: bgColor,
+                color: '#fff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                zIndex: '10000000'
+            });
+            return button;
+        }
+
+        function startDragging(e) {
+            if (e.target.dataset.corner) return;
+
+            const rect = cropBox.getBoundingClientRect();
+            dragState.dragOffsetX = e.clientX - rect.left;
+            dragState.dragOffsetY = e.clientY - rect.top;
+            dragState.isDragging = true;
+            e.preventDefault();
+        }
+
+        function startResizing(e) {
+            e.stopPropagation();
+            dragState.isResizing = true;
+            dragState.corner = e.target.dataset.corner;
+            dragState.startX = e.clientX;
+            dragState.startY = e.clientY;
+
+            const rect = cropBox.getBoundingClientRect();
+            dragState.startWidth = rect.width;
+            dragState.startHeight = rect.height;
+            dragState.startLeft = rect.left;
+            dragState.startTop = rect.top;
+            e.preventDefault();
+        }
+
+        function handleMouseMove(e) {
+            if (dragState.isDragging) {
+                handleDrag(e);
+            } else if (dragState.isResizing) {
+                handleResize(e);
+            }
+        }
+
+        function handleDrag(e) {
+            const newX = e.clientX - dragState.dragOffsetX;
+            const newY = e.clientY - dragState.dragOffsetY;
+            const maxX = window.innerWidth - cropBox.offsetWidth;
+            const maxY = window.innerHeight - cropBox.offsetHeight;
+
+            cropBox.style.left = Math.max(0, Math.min(newX, maxX)) + 'px';
+            cropBox.style.top = Math.max(0, Math.min(newY, maxY)) + 'px';
+            cropBox.style.transform = 'none';
+        }
+
+        function handleResize(e) {
+            const deltaX = e.clientX - dragState.startX;
+            const deltaY = e.clientY - dragState.startY;
+
+            let newWidth = dragState.startWidth;
+            let newHeight = dragState.startHeight;
+            let newLeft = dragState.startLeft;
+            let newTop = dragState.startTop;
+
+            // Calculate new dimensions based on corner
+            if (dragState.corner.includes('e')) {
+                newWidth = Math.max(50, dragState.startWidth + deltaX);
+            }
+            if (dragState.corner.includes('w')) {
+                newWidth = Math.max(50, dragState.startWidth - deltaX);
+                newLeft = dragState.startLeft + deltaX;
+            }
+            if (dragState.corner.includes('s')) {
+                newHeight = Math.max(50, dragState.startHeight + deltaY);
+            }
+            if (dragState.corner.includes('n')) {
+                newHeight = Math.max(50, dragState.startHeight - deltaY);
+                newTop = dragState.startTop + deltaY;
+            }
+
+            // Maintain 5:4 aspect ratio
+            const currentRatio = newWidth / newHeight;
+            if (Math.abs(currentRatio - ASPECT_RATIO) > 0.01) {
+                newHeight = newWidth / ASPECT_RATIO;
+                if (dragState.corner.includes('n')) {
+                    newTop = dragState.startTop + (dragState.startHeight - newHeight);
+                }
+            }
+
+            // Boundary checks
+            if (dragState.corner.includes('w') && newLeft < 0) {
+                newWidth += newLeft;
+                newLeft = 0;
+            }
+            if (dragState.corner.includes('n') && newTop < 0) {
+                newHeight += newTop;
+                newTop = 0;
+            }
+            if (dragState.corner.includes('e') && newLeft + newWidth > window.innerWidth) {
+                newWidth = window.innerWidth - newLeft;
+            }
+            if (dragState.corner.includes('s') && newTop + newHeight > window.innerHeight) {
+                newHeight = window.innerHeight - newTop;
+            }
+
+            // Apply new dimensions
+            cropBox.style.width = newWidth + 'px';
+            cropBox.style.height = newHeight + 'px';
+            cropBox.style.left = newLeft + 'px';
+            cropBox.style.top = newTop + 'px';
+            cropBox.style.transform = 'none';
+        }
+
+        function handleMouseUp() {
+            dragState.isDragging = false;
+            dragState.isResizing = false;
+        }
+
+        async function handleConfirm() {
+            const cropRect = cropBox.getBoundingClientRect();
+            const imgRect = targetImg.getBoundingClientRect();
+
+            const scaleX = targetImg.naturalWidth / targetImg.offsetWidth;
+            const scaleY = targetImg.naturalHeight / targetImg.offsetHeight;
+
+            const cropData = {
+                x: Math.max(0, (cropRect.left - imgRect.left) * scaleX),
+                y: Math.max(0, (cropRect.top - imgRect.top) * scaleY),
+                width: Math.min(cropRect.width * scaleX, targetImg.naturalWidth),
+                height: Math.min(cropRect.height * scaleY, targetImg.naturalHeight)
+            };
+
+            // Create canvas and crop image
+            const canvas = document.createElement('canvas');
+            canvas.width = cropData.width;
+            canvas.height = cropData.height;
+            const ctx = canvas.getContext('2d');
+
+            ctx.drawImage(
+                targetImg,
+                cropData.x, cropData.y, cropData.width, cropData.height,
+                0, 0, cropData.width, cropData.height
+            );
+
+            try {
+                canvas.toBlob(async (blob) => {
+                    if (!blob) {
+                        alert('Failed to crop image');
+                        cleanup();
+                        resolve(false);
+                        return;
+                    }
+
+                    await processAndSendToAnki(blob);
+                }, 'image/jpg', 1.0);
+            } catch (error) {
+                console.error('Cropping error:', error);
+                alert('Error cropping image: ' + error.message);
+                cleanup();
+                resolve(false);
+            }
+        }
+
+        async function processAndSendToAnki(blob) {
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const base64Data = reader.result.split(',')[1];
+                const filename = `mangatan_${Date.now()}.jpg`;
+
+                try {
+                    // Store media file
+                    await ankiConnectRequest('storeMediaFile', {
+                        filename: filename,
+                        data: base64Data
+                    });
+
+                    // Find most recent note
+                    const notes = await ankiConnectRequest('findNotes', {
+                        query: 'added:1'
+                    });
+
+                    if (!notes || notes.length === 0) {
+                        throw new Error('No recently added cards found. Create one first.');
+                    }
+
+                    const lastNoteId = notes.sort((a, b) => b - a)[0];
+
+                    // Update note with image
+                    await ankiConnectRequest('updateNoteFields', {
+                        note: {
+                            id: lastNoteId,
+                            fields: {
+                                [settings.ankiImageField]: `<img src="${filename}">`
+                            }
+                        }
+                    });
+
+                    cleanup();
+                    resolve(true);
+                } catch (error) {
+                    console.error('Anki error:', error);
+                    alert('Error sending to Anki: ' + error.message);
+                    cleanup();
+                    resolve(false);
+                }
+            };
+            reader.readAsDataURL(blob);
+        }
+
+        function handleCancel() {
+            cleanup();
+            resolve(false);
+        }
+
+        function cleanup() {
+            document.removeEventListener('mousemove', handleMouseMove);
+            document.removeEventListener('mouseup', handleMouseUp);
+
+            if (overlay.parentNode) document.body.removeChild(overlay);
+            if (confirmButton.parentNode) document.body.removeChild(confirmButton);
+            if (cancelButton.parentNode) document.body.removeChild(cancelButton);
+        }
+    });
+}
+/**
+ * Syncs modified OCR data back to the server's cache
+ * @param {HTMLImageElement} sourceImage - The image whose cache needs updating
+ * @returns {Promise<boolean>} True if successful, false otherwise
+ */
+async function syncCacheToServer(sourceImage) {
+    if (!sourceImage || !sourceImage.src) {
+        logDebug("syncCacheToServer: Invalid image provided");
+        return false;
+    }
+
+    const cacheData = ocrDataCache.get(sourceImage);
+    if (!cacheData || !Array.isArray(cacheData)) {
+        logDebug("syncCacheToServer: No valid cache data found");
+        return false;
+    }
+
+    return new Promise((resolve) => {
+        const updateData = {
+            url: sourceImage.src,
+            data: cacheData,
+            context: document.title
+        };
+
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: `${settings.ocrServerUrl}/update-cache`,
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            data: JSON.stringify(updateData),
+            timeout: 10000,
+            onload: (response) => {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (response.status === 200 && data.status === 'success') {
+                        logDebug(`Cache synced successfully: ${sourceImage.src.slice(-50)}`);
+                        resolve(true);
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                } catch (e) {
+                    logDebug(`Cache sync failed: ${e.message}`);
+                    resolve(false);
+                }
+            },
+            onerror: () => {
+                logDebug('Cache sync connection error');
+                resolve(false);
+            },
+            ontimeout: () => {
+                logDebug('Cache sync timed out');
+                resolve(false);
+            }
+        });
+    });
+}
     async function runProbingProcess(baseUrl, btn) {
         logDebug(`Requesting SERVER-SIDE job for: ${baseUrl}`); const originalText = btn.textContent; btn.disabled = true; btn.textContent = 'Starting...';
         const postData = { baseUrl: baseUrl, user: settings.imageServerUser, pass: settings.imageServerPassword, context: document.title };
@@ -510,17 +1388,150 @@
             .interaction-mode-click.is-focused.has-manual-highlight .gemini-ocr-text-box:not(.manual-highlight) { opacity: var(--ocr-dimmed-opacity); }
             .solo-hover-mode.is-focused .gemini-ocr-text-box { opacity: 0; }
             .solo-hover-mode.is-focused .gemini-ocr-text-box:hover { opacity: 1; }
+
+            /* Editable text box styles */
+            .gemini-ocr-text-box.editing {
+                background: rgba(255, 255, 255, 0.95) !important;
+                color: #000 !important;
+                z-index: 10000 !important;
+                border: 2px solid #3498db !important;
+                border-radius: 4px !important;
+                padding: 4px !important;
+                white-space: pre-wrap !important;
+                text-align: left !important;
+                overflow: auto !important;
+                cursor: text !important;
+            }
+
             .gemini-ocr-chapter-batch-btn { font-family: "Roboto","Helvetica","Arial",sans-serif; font-weight: 500; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(240,153,136,0.5); color: #f09988; background-color: transparent; cursor: pointer; margin-right: 4px; transition: all 150ms; min-width: 80px; text-align: center; } .gemini-ocr-chapter-batch-btn:hover { background-color: rgba(240,153,136,0.08); } .gemini-ocr-chapter-batch-btn:disabled { color: grey; border-color: grey; cursor: wait; } #gemini-ocr-settings-button { position: fixed; bottom: 15px; right: 15px; z-index: 2147483647; background: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.5); user-select: none; } #gemini-ocr-global-anki-export-btn { position: fixed; bottom: 75px; right: 15px; z-index: 2147483646; background-color: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 30px; line-height: 50px; text-align: center; cursor: pointer; transition: all 0.2s; user-select: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); } #gemini-ocr-global-anki-export-btn:hover { background-color: #27ae60; transform: scale(1.1); } #gemini-ocr-global-anki-export-btn:disabled { background-color: #95a5a6; cursor: wait; transform: none; } #gemini-ocr-global-anki-export-btn.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: scale(0.5); } .gemini-ocr-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #1A1D21; border: 1px solid var(--modal-header-color, #00BFFF); border-radius: 15px; z-index: 2147483647; color: #EAEAEA; font-family: sans-serif; box-shadow: 0 8px 32px 0 rgba(0,0,0,0.5); width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; } .gemini-ocr-modal.is-hidden { display: none; } .gemini-ocr-modal-header { padding: 20px 25px; border-bottom: 1px solid #444; } .gemini-ocr-modal-header h2 { margin: 0; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-modal-content { padding: 10px 25px; overflow-y: auto; flex-grow: 1; } .gemini-ocr-modal-footer { padding: 15px 25px; border-top: 1px solid #444; display: flex; justify-content: flex-start; gap: 10px; align-items: center; } .gemini-ocr-modal-footer button:last-of-type { margin-left: auto; } .gemini-ocr-modal h3 { font-size: 1.1em; margin: 15px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 15px; align-items: center; } .full-width { grid-column: 1 / -1; } .gemini-ocr-modal input, .gemini-ocr-modal textarea, .gemini-ocr-modal select { width: 100%; padding: 8px; box-sizing: border-box; font-family: monospace; background-color: #2a2a2e; border: 1px solid #555; border-radius: 5px; color: #EAEAEA; } .gemini-ocr-modal button { padding: 10px 18px; border: none; border-radius: 5px; color: #1A1D21; cursor: pointer; font-weight: bold; } #gemini-ocr-server-status { padding: 10px; border-radius: 5px; text-align: center; cursor: pointer; transition: background-color 0.3s; } #gemini-ocr-server-status.status-ok { background-color: #27ae60; } #gemini-ocr-server-status.status-error { background-color: #c0392b; } #gemini-ocr-server-status.status-checking { background-color: #3498db; }
         `);
-        document.body.insertAdjacentHTML('beforeend', ` <button id="gemini-ocr-global-anki-export-btn" title="Export Screenshot to Anki">✚</button> <button id="gemini-ocr-settings-button">⚙️</button> <div id="gemini-ocr-settings-modal" class="gemini-ocr-modal is-hidden"> <div class="gemini-ocr-modal-header"><h2>Automatic Content OCR Settings (PC Modifier Merge)</h2></div> <div class="gemini-ocr-modal-content"> <h3>OCR & Image Source</h3><div class="gemini-ocr-settings-grid full-width"> <label for="gemini-ocr-server-url">OCR Server URL:</label><input type="text" id="gemini-ocr-server-url"> <label for="gemini-image-server-user">Image Source Username:</label><input type="text" id="gemini-image-server-user" autocomplete="username" placeholder="Optional"> <label for="gemini-image-server-password">Image Source Password:</label><input type="password" id="gemini-image-server-password" autocomplete="current-password" placeholder="Optional"> </div> <div id="gemini-ocr-server-status" class="full-width" style="margin-top: 10px;">Click to check server status</div> <h3>Anki Integration</h3><div class="gemini-ocr-settings-grid"> <label for="gemini-ocr-anki-url">Anki-Connect URL:</label><input type="text" id="gemini-ocr-anki-url"> <label for="gemini-ocr-anki-field">Image Field Name:</label><input type="text" id="gemini-ocr-anki-field" placeholder="e.g., Image"> </div> <h3>Interaction & Display</h3><div class="gemini-ocr-settings-grid"> <label for="ocr-brightness-mode">Theme Mode:</label><select id="ocr-brightness-mode"><option value="light">Light</option><option value="dark">Dark</option></select> <label for="ocr-color-theme">Color Theme:</label><select id="ocr-color-theme">${Object.keys(COLOR_THEMES).map(t=>`<option value="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}</select> <label for="ocr-interaction-mode">Highlight Mode:</label><select id="ocr-interaction-mode"><option value="hover">On Hover</option><option value="click">On Click</option></select> <label for="ocr-focus-font-color">Focus Font Color:</label><select id="ocr-focus-font-color"><option value="default">Default</option><option value="black">Black</option><option value="white">White</option><option value="difference">Difference (Blend)</option></select> <label for="ocr-dimmed-opacity">Dimmed Box Opacity (%):</label><input type="number" id="ocr-dimmed-opacity" min="0" max="100" step="5"> <label for="ocr-focus-scale-multiplier">Focus Scale Multiplier:</label><input type="number" id="ocr-focus-scale-multiplier" min="1" max="3" step="0.05"> <label for="ocr-delete-key">Delete Modifier Key:</label><input type="text" id="ocr-delete-key" placeholder="Control, Alt, Shift..."> <label for="ocr-merge-key">Merge Modifier Key:</label><input type="text" id="ocr-merge-key" placeholder="Control, Alt, Shift..."> <label for="ocr-text-orientation">Text Orientation:</label><select id="ocr-text-orientation"><option value="smart">Smart</option><option value="forceHorizontal">Horizontal</option><option value="forceVertical">Vertical</option></select> <label for="ocr-font-multiplier-horizontal">H. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-horizontal" min="0.1" max="5" step="0.1"> <label for="ocr-font-multiplier-vertical">V. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-vertical" min="0.1" max="5" step="0.1"> <label for="ocr-bounding-box-adjustment-input">Box Adjustment (px):</label><input type="number" id="ocr-bounding-box-adjustment-input" min="0" max="100" step="1"> </div><div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-solo-hover-mode"> Only show hovered box (Hover Mode)</label><label><input type="checkbox" id="gemini-ocr-add-space-on-merge"> Add space on merge</label></div> <h3>Advanced</h3><div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-debug-mode"> Debug Mode</label></div> <div class="gemini-ocr-settings-grid full-width"><label for="gemini-ocr-sites-config">Site Configurations (URL; OverflowFix; Containers...)</label><textarea id="gemini-ocr-sites-config" rows="6" placeholder="127.0.0.1; .overflow-fix; .container1; .container2
-"></textarea></div> </div> <div class="gemini-ocr-modal-footer"> <button id="gemini-ocr-purge-cache-btn" style="background-color: #c0392b;" title="Deletes all entries from the server's OCR cache file.">Purge Server Cache</button> <button id="gemini-ocr-batch-chapter-btn" style="background-color: #3498db;" title="Queues the current chapter on the server for background pre-processing.">Pre-process Chapter</button> <button id="gemini-ocr-debug-btn" style="background-color: #777;">Debug</button> <button id="gemini-ocr-close-btn" style="background-color: #555;">Close</button> <button id="gemini-ocr-save-btn" style="background-color: #3ad602;">Save & Reload</button> </div> </div> <div id="gemini-ocr-debug-modal" class="gemini-ocr-modal is-hidden"><div class="gemini-ocr-modal-header"><h2>Debug Log</h2></div><div class="gemini-ocr-modal-content"><textarea id="gemini-ocr-debug-log" readonly style="width:100%; height: 100%; resize:none;"></textarea></div><div class="gemini-ocr-modal-footer"><button id="gemini-ocr-close-debug-btn" style="background-color: #555;">Close</button></div></div> `);
+        document.body.insertAdjacentHTML('beforeend', ` <button id="gemini-ocr-global-anki-export-btn" title="Export Screenshot to Anki">➕</button> <button id="gemini-ocr-settings-button">⚙️</button> <div id="gemini-ocr-settings-modal" class="gemini-ocr-modal is-hidden"> <div class="gemini-ocr-modal-header"><h2>Automatic Content OCR Settings (PC Modifier Merge)</h2></div> <div class="gemini-ocr-modal-content"> <h3>OCR & Image Source</h3><div class="gemini-ocr-settings-grid full-width"> <label for="gemini-ocr-server-url">OCR Server URL:</label><input type="text" id="gemini-ocr-server-url"> <label for="gemini-image-server-user">Image Source Username:</label><input type="text" id="gemini-image-server-user" autocomplete="username" placeholder="Optional"> <label for="gemini-image-server-password">Image Source Password:</label><input type="password" id="gemini-image-server-password" autocomplete="current-password" placeholder="Optional"> </div> <div id="gemini-ocr-server-status" class="full-width" style="margin-top: 10px;">Click to check server status</div> <h3>Anki Integration</h3><div class="gemini-ocr-settings-grid"> <label for="gemini-ocr-anki-url">Anki-Connect URL:</label><input type="text" id="gemini-ocr-anki-url"> <label for="gemini-ocr-anki-field">Image Field Name:</label><input type="text" id="gemini-ocr-anki-field" placeholder="e.g., Image"> </div> <h3>Interaction & Display</h3><div class="gemini-ocr-settings-grid"> <label for="ocr-brightness-mode">Theme Mode:</label><select id="ocr-brightness-mode"><option value="light">Light</option><option value="dark">Dark</option></select> <label for="ocr-color-theme">Color Theme:</label><select id="ocr-color-theme">${Object.keys(COLOR_THEMES).map(t=>`<option value="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}</select> <label for="ocr-interaction-mode">Highlight Mode:</label><select id="ocr-interaction-mode"><option value="hover">On Hover</option><option value="click">On Click</option></select> <label for="ocr-focus-font-color">Focus Font Color:</label><select id="ocr-focus-font-color"><option value="default">Default</option><option value="black">Black</option><option value="white">White</option><option value="difference">Difference (Blend)</option></select> <label for="ocr-dimmed-opacity">Dimmed Box Opacity (%):</label><input type="number" id="ocr-dimmed-opacity" min="0" max="100" step="5"> <label for="ocr-focus-scale-multiplier">Focus Scale Multiplier:</label><input type="number" id="ocr-focus-scale-multiplier" min="1" max="3" step="0.05"> <label for="ocr-delete-key">Delete Modifier Key:</label><input type="text" id="ocr-delete-key" placeholder="Control, Alt, Shift..."> <label for="ocr-merge-key">Merge Modifier Key:</label><input type="text" id="ocr-merge-key" placeholder="Control, Alt, Shift..."> <label for="ocr-text-orientation">Text Orientation:</label><select id="ocr-text-orientation"><option value="smart">Smart</option><option value="forceHorizontal">Horizontal</option><option value="forceVertical">Vertical</option></select> <label for="ocr-font-multiplier-horizontal">H. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-horizontal" min="0.1" max="5" step="0.1"> <label for="ocr-font-multiplier-vertical">V. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-vertical" min="0.1" max="5" step="0.1"> <label for="ocr-bounding-box-adjustment-input">Box Adjustment (px):</label><input type="number" id="ocr-bounding-box-adjustment-input" min="0" max="100" step="1"> </div><div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-solo-hover-mode"> Only show hovered box (Hover Mode)</label><label><input type="checkbox" id="gemini-ocr-add-space-on-merge"> Add space on merge</label></div> <h3>Advanced</h3><div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-debug-mode"> Debug Mode</label></div> <div class="gemini-ocr-settings-grid full-width"><label for="gemini-ocr-sites-config">Site Configurations (URL; OverflowFix; Containers...)</label><textarea id="gemini-ocr-sites-config" rows="6" placeholder="127.0.0.1; .overflow-fix; .container1; .container2"></textarea></div> </div> <div class="gemini-ocr-modal-footer"> <button id="gemini-ocr-purge-cache-btn" style="background-color: #c0392b;" title="Deletes all entries from the server's OCR cache file.">Purge Server Cache</button> <button id="gemini-ocr-batch-chapter-btn" style="background-color: #3498db;" title="Queues the current chapter on the server for background pre-processing.">Pre-process Chapter</button> <button id="gemini-ocr-debug-btn" style="background-color: #777;">Debug</button> <button id="gemini-ocr-close-btn" style="background-color: #555;">Close</button> <button id="gemini-ocr-save-btn" style="background-color: #3ad602;">Save & Reload</button> </div> </div> <div id="gemini-ocr-debug-modal" class="gemini-ocr-modal is-hidden"><div class="gemini-ocr-modal-header"><h2>Debug Log</h2></div><div class="gemini-ocr-modal-content"><textarea id="gemini-ocr-debug-log" readonly style="width:100%; height: 100%; resize:none;"></textarea></div><div class="gemini-ocr-modal-footer"><button id="gemini-ocr-close-debug-btn" style="background-color: #555;">Close</button></div></div> `);
     }
     function bindUIEvents() {
         Object.assign(UI, {
             settingsButton: document.getElementById('gemini-ocr-settings-button'), settingsModal: document.getElementById('gemini-ocr-settings-modal'), globalAnkiButton: document.getElementById('gemini-ocr-global-anki-export-btn'), debugModal: document.getElementById('gemini-ocr-debug-modal'), serverUrlInput: document.getElementById('gemini-ocr-server-url'), imageServerUserInput: document.getElementById('gemini-image-server-user'), imageServerPasswordInput: document.getElementById('gemini-image-server-password'), ankiUrlInput: document.getElementById('gemini-ocr-anki-url'), ankiFieldInput: document.getElementById('gemini-ocr-anki-field'), debugModeCheckbox: document.getElementById('gemini-ocr-debug-mode'), soloHoverCheckbox: document.getElementById('gemini-ocr-solo-hover-mode'), addSpaceOnMergeCheckbox: document.getElementById('gemini-ocr-add-space-on-merge'), interactionModeSelect: document.getElementById('ocr-interaction-mode'), dimmedOpacityInput: document.getElementById('ocr-dimmed-opacity'), textOrientationSelect: document.getElementById('ocr-text-orientation'), colorThemeSelect: document.getElementById('ocr-color-theme'), brightnessModeSelect: document.getElementById('ocr-brightness-mode'), focusFontColorSelect: document.getElementById('ocr-focus-font-color'), deleteKeyInput: document.getElementById('ocr-delete-key'), mergeKeyInput: document.getElementById('ocr-merge-key'), fontMultiplierHorizontalInput: document.getElementById('ocr-font-multiplier-horizontal'), fontMultiplierVerticalInput: document.getElementById('ocr-font-multiplier-vertical'), boundingBoxAdjustmentInput: document.getElementById('ocr-bounding-box-adjustment-input'), focusScaleMultiplierInput: document.getElementById('ocr-focus-scale-multiplier'), sitesConfigTextarea: document.getElementById('gemini-ocr-sites-config'), statusDiv: document.getElementById('gemini-ocr-server-status'), debugLogTextarea: document.getElementById('gemini-ocr-debug-log'), saveBtn: document.getElementById('gemini-ocr-save-btn'), closeBtn: document.getElementById('gemini-ocr-close-btn'), debugBtn: document.getElementById('gemini-ocr-debug-btn'), closeDebugBtn: document.getElementById('gemini-ocr-close-debug-btn'), batchChapterBtn: document.getElementById('gemini-ocr-batch-chapter-btn'), purgeCacheBtn: document.getElementById('gemini-ocr-purge-cache-btn'),
         });
         UI.settingsButton.addEventListener('click', () => UI.settingsModal.classList.toggle('is-hidden'));
-        UI.globalAnkiButton.addEventListener('click', async () => { let targetImage = activeImageForExport; if (!targetImage) { for (const [img, state] of managedElements.entries()) { if (img.isConnected && img.offsetParent !== null && img.naturalHeight > 0) { targetImage = img; break; } } } if (targetImage) { const btn = UI.globalAnkiButton; btn.textContent = '…'; btn.disabled = true; const success = await exportImageToAnki(targetImage); btn.textContent = success ? '✓' : '✖'; btn.style.backgroundColor = success ? '#27ae60' : '#c0392b'; setTimeout(() => { btn.textContent = '✚'; btn.style.backgroundColor = ''; btn.disabled = false; }, 2000); } else { alert("No images available for export. Please wait for images to load."); } });
+
+        // CRITICAL FIX: Updated Anki button handler with validation
+        UI.globalAnkiButton.addEventListener('click', async () => {
+            let targetImage = activeImageForExport;
+
+            // DEBUG: Log what we're starting with
+            console.log('[ANKI EXPORT DEBUG] Starting export...');
+            console.log('[ANKI EXPORT DEBUG] activeImageForExport:', targetImage ? targetImage.src : 'null');
+            console.log('[ANKI EXPORT DEBUG] Current URL:', window.location.href);
+            console.log('[ANKI EXPORT DEBUG] managedElements size:', managedElements.size);
+
+            // CRITICAL FIX: Validate the image is actually visible and managed
+            if (targetImage) {
+                // Also check if image is from current chapter
+                const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+                const imageChapterMatch = targetImage.src.match(/\/manga\/\d+\/chapter\/\d+/);
+                const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+
+                const isValid = (
+                    targetImage.isConnected &&
+                    managedElements.has(targetImage) &&
+                    targetImage.offsetParent !== null &&
+                    targetImage.naturalHeight > 0 &&
+                    isFromCurrentChapter
+                );
+
+                console.log('[ANKI EXPORT DEBUG] Image validation:', {
+                    isConnected: targetImage.isConnected,
+                    hasInManagedElements: managedElements.has(targetImage),
+                    offsetParent: targetImage.offsetParent !== null,
+                    naturalHeight: targetImage.naturalHeight,
+                    isFromCurrentChapter: isFromCurrentChapter,
+                    currentChapter: currentChapterMatch ? currentChapterMatch[0] : 'none',
+                    imageChapter: imageChapterMatch ? imageChapterMatch[0] : 'none',
+                    isValid: isValid
+                });
+
+                if (!isValid) {
+                    console.log('[ANKI EXPORT DEBUG] Image is stale/invalid or from wrong chapter!');
+                    logDebug("Active image reference is invalid/stale. Searching for visible image.");
+                    targetImage = null;
+                    activeImageForExport = null; // Clear the stale reference
+                }
+            }
+
+            // If no valid image, find the first visible one
+            if (!targetImage) {
+                console.log('[ANKI EXPORT DEBUG] Searching for visible images...');
+                logDebug("No active image, searching for visible images...");
+
+                const visibleCandidates = [];
+
+                // Get current chapter for filtering
+                const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+
+                for (const [img, state] of managedElements.entries()) {
+                    const rect = img.getBoundingClientRect();
+                    const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+
+                    // CRITICAL: Skip images that aren't connected to the DOM
+                    if (!img.isConnected) {
+                        continue;
+                    }
+
+                    // Check if image is from current chapter
+                    const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
+                    const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+
+                    visibleCandidates.push({
+                        src: img.src.slice(-50),
+                        fullSrc: img.src,
+                        isConnected: img.isConnected,
+                        offsetParent: img.offsetParent !== null,
+                        naturalHeight: img.naturalHeight,
+                        overlayConnected: state.overlay?.isConnected,
+                        inViewport: isInViewport,
+                        isFromCurrentChapter: isFromCurrentChapter,
+                        rectTop: rect.top,
+                        rectBottom: rect.bottom
+                    });
+
+                    // Only select images from the current chapter
+                    if (img.isConnected &&
+                        img.offsetParent !== null &&
+                        img.naturalHeight > 0 &&
+                        state.overlay?.isConnected &&
+                        isInViewport &&
+                        isFromCurrentChapter) {
+                        targetImage = img;
+                        console.log('[ANKI EXPORT DEBUG] Selected image:', img.src.slice(-50));
+                        logDebug(`Found visible image: ${img.src.slice(-50)}`);
+                        break;
+                    }
+                }
+
+                console.log('[ANKI EXPORT DEBUG] Current chapter:', currentChapterMatch ? currentChapterMatch[0] : 'none');
+                console.log('[ANKI EXPORT DEBUG] All candidates:', visibleCandidates);
+            }
+
+            if (targetImage) {
+                console.log('[ANKI EXPORT DEBUG] Final selected image:', targetImage.src);
+                logDebug(`Using image for Anki export: ${targetImage.src.slice(-50)}`);
+                const btn = UI.globalAnkiButton;
+                btn.textContent = '⏳';
+                btn.disabled = true;
+                const success = await exportImageToAnki(targetImage);
+                btn.textContent = success ? '✓' : '✖';
+                btn.style.backgroundColor = success ? '#27ae60' : '#c0392b';
+                setTimeout(() => {
+                    btn.textContent = '➕';
+                    btn.style.backgroundColor = '';
+                    btn.disabled = false;
+                }, 2000);
+            } else {
+                console.log('[ANKI EXPORT DEBUG] NO VALID IMAGE FOUND!');
+                alert("No images available for export. Please wait for images to load.");
+                logDebug("EXPORT FAILED: No valid images found in managedElements");
+            }
+        });
+
         // --- STABILITY FIX: Make Anki button part of the unified hover area ---
         UI.globalAnkiButton.addEventListener('mouseenter', () => {
             const state = activeImageForExport ? managedElements.get(activeImageForExport) : null;
@@ -541,6 +1552,7 @@
             }
         });
         // End of stability fix
+
         UI.statusDiv.addEventListener('click', checkServerStatus);
         UI.closeBtn.addEventListener('click', () => UI.settingsModal.classList.add('is-hidden'));
         UI.debugBtn.addEventListener('click', () => { UI.debugLogTextarea.value = debugLog.join('\n'); UI.debugModal.classList.remove('is-hidden'); UI.debugLogTextarea.scrollTop = UI.debugLogTextarea.scrollHeight; });
@@ -592,7 +1604,12 @@
         bindUIEvents();
         applyTheme();
         createMeasurementSpan();
-        logDebug("Initializing HYBRID engine with Focus Color (BlendMode). Hover Stability Patches Applied. Font Size Calculation Fix Applied. Site Matching Debug Included. OCR Error Resilience Added.");
+        logDebug("Initializing HYBRID engine with Focus Color (BlendMode). Hover Stability Patches Applied. Font Size Calculation Fix Applied. Site Matching Debug Included. OCR Error Resilience Added. Editable Text Boxes Enabled. Image Export Fix Applied. Blank Alt Attributes & Hide Numbered Container & Duplicate Punctuation Remover Enabled. Merge Selection Stability Fixed.");
+
+        // Initialize the additional functionality
+        setupBlankAltObservers();
+        setupPunctuationRemover();
+
         resizeObserver = new ResizeObserver(handleResize);
         intersectionObserver = new IntersectionObserver(handleIntersection, { rootMargin: '100px 0px' });
         setupMutationObservers();
@@ -600,7 +1617,24 @@
         UI.sitesConfigTextarea.value = settings.sites.map(s => [s.urlPattern, s.overflowFixSelector, ...(s.imageContainerSelectors || []), s.contentRootSelector].join('; ')).join('\n');
         reinitializeScript();
         setupNavigationObserver();
-        setInterval(() => { for (const [img] of managedElements.entries()) if (!img.isConnected) { logDebug("Detected disconnected image during cleanup."); fullCleanupAndReset(); setTimeout(reinitializeScript, 250); break; } }, 5000);
+
+        // More aggressive cleanup - run every 2 seconds instead of 5
+        setInterval(() => {
+            cleanupDisconnectedImages();
+        }, 2000);
+
+        // Emergency full reset if major navigation detected
+        setInterval(() => {
+            for (const [img] of managedElements.entries()) {
+                if (!img.isConnected) {
+                    logDebug("Detected disconnected image during periodic check - triggering full reset.");
+                    fullCleanupAndReset();
+                    setTimeout(reinitializeScript, 250);
+                    break;
+                }
+            }
+        }, 5000);
+
         setInterval(() => { const shouldBe = window.location.href.includes('/manga/'); document.documentElement.classList.toggle('ocr-scroll-fix-active', shouldBe); }, 500);
     }
     init().catch(e => console.error(`[OCR Hybrid] Fatal Initialization Error: ${e.message}`));
