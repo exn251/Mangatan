@@ -23,7 +23,7 @@ With manga from Suwayomi, Mangatan will automatically make each pages' text scan
     *   Follow the installation instructions provided on their official GitHub page to get it running.
 
 2.  **Tampermonkey Extension & Userscript**
-    *   Get the **[Tampermonkey](https://www.tampermonkey.net/)** extension for your browser.
+    *   Get the **[Tampermonkey](https://www.tampermonkey.net/)** extension for your browser. ( allow access to file urls in your browser's extension settings)
     *   Then, install the required userscript for this project from this GitHub repository.
 
 3. Install [uv](https://docs.astral.sh/uv/getting-started/installation/)
@@ -167,7 +167,20 @@ For Android users, you'll need **Termux**.
     > ```sh
     > rm -rf ~/Mangatan && pkg install -y git nodejs && git clone https://github.com/kaihouguide/Mangatan && cd Mangatan/ocr-server-legacy && npm install express chrome-lens-ocr multer node-fetch --force && mkdir -p ~/bin && echo -e '#!/data/data/com.termux/files/usr/bin/sh\ncd ~/Mangatan/ocr-server-legacy && node server.js' > ~/bin/mangatan && chmod +x ~/bin/mangatan && echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
     
-   
+      *   After the command above finishes, run these next commands **one-by-one** to finalize the installation.
+        > ```sh
+        > npm install --cpu=wasm32 sharp --force
+        > ```
+        > ```sh
+        > npm install @img/sharp-wasm32 --force
+        > ```
+        > ```sh
+        > rm -rf node_modules package-lock.json
+        > ```
+        > ```sh
+        > npm install --force
+        > ```
+
     > After this, you can always start the Mangatan server by just typing `mangatan` in Termux.
 
 ### 💡 Usage
