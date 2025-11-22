@@ -543,6 +543,48 @@ def import_cache_endpoint():
     except Exception as e:
         return jsonify({"error": f"Import failed: {e}"}), 500
 
+@app.route("/update-cache", methods=["POST"])
+def update_cache_endpoint():
+    """
+    Updates a specific cache entry with modified OCR data.
+    Expected JSON: { "url": "image_url", "data": [...ocr_results...], "context": "optional context" }
+    """
+    try:
+        request_data = request.json
+        if not request_data:
+            return jsonify({"error": "Invalid JSON payload"}), 400
+        
+        image_url = request_data.get("url")
+        new_data = request_data.get("data")
+        context = request_data.get("context", "Updated from client")
+        
+        if not image_url:
+            return jsonify({"error": "URL is required"}), 400
+        
+        if not isinstance(new_data, list):
+            return jsonify({"error": "Data must be an array of OCR results"}), 400
+        
+        with cache_lock:
+            # Update the cache entry
+            ocr_cache[image_url] = {
+                "context": context,
+                "data": new_data
+            }
+            save_cache()
+            
+            print(f"[Cache] Updated entry for: {image_url[-50:]}")
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Cache updated for {image_url}",
+            "data_length": len(new_data)
+        })
+    
+    except Exception as e:
+        print(f"[Cache] Update failed: {e}")
+        if is_debug_mode:
+            traceback.print_exc()
+        return jsonify({"error": f"Update failed: {e}"}), 500
 
 # endregion
 
