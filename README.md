@@ -1,3 +1,30 @@
+## Personal changes:
+Anki/Mining:
+*   Anki Export reworked (images should work on ankiconnect android)
+*   Added image picker for choosing which active image is being cropped for anki (useful for when multiple pages are active at once like in continuous horizontal and dual page)
+*   Removed HTML that would make it into the sentence field of anki cards (might make UI navigation slightly annoying on specific setups)
+*   Editable text boxes by double clicking
+*   Changes done to text by merging, deleting or editing should save to cache (if you are using my edit of server.py)
+
+https://github.com/user-attachments/assets/b7649677-3453-4bca-8898-56761141bc31
+
+Visuals:
+*   Changed up textbox formatting so text stays within the bounds of the box (should be pretty consistent)
+*   Added a lot text replacements for things like duplicate question marks converting to single characters like unicode “⁇” which dont break visual formatting
+<img width="639" height="461" alt="image" src="https://github.com/user-attachments/assets/81c63708-c0f5-46ab-ac4b-7bacc6eb0427" />
+
+
+Misc:
+*   Changed default settings to be more mokuro-like (black & gray themes with hover)
+*   Export to anki button always visible now.
+
+Notes:
+*   Change Text Parsing>Sentence termination characters to "Custom, no new lines" in yomitan if your sentences are incomplete when mining
+
+Disclaimer: All code is AI generated and this was done for personal use so don't expect too much
+
+Original readme below:
+
 ## Please add \n to nothing in your yomitan replacement patterns under Translation for now
 Welcome! This guide provides the steps to get your OCR server running for a seamless reading experience.
 
