@@ -91,48 +91,23 @@
         document.dispatchEvent(new CustomEvent('ocr-log-update'));
     };
 
-    // --- Blank Image Alt Attributes Functions ---
-    function blankImageAlts() {
-        const container = document.querySelector(blankAltConfig.containerSelector);
+// --- Blank Image Alt Attributes Functions ---
+function blankImageAlts() {
+    const container = document.querySelector(blankAltConfig.containerSelector);
 
-        if (container) {
-            const images = container.querySelectorAll('img');
-            images.forEach(img => {
-                img.setAttribute('alt', '');
-                logDebug('Blanked alt attribute for an image: ' + img.src);
-            });
-
-            if (images.length === 0) {
-                logDebug('No images found within the specified container.');
-            }
-        } else {
-            logDebug('Specified container not found: ' + blankAltConfig.containerSelector);
-        }
+    if (container) {
+        const images = container.querySelectorAll('img');
+        images.forEach(img => {
+            img.setAttribute('alt', '');
+        });
     }
+}
 
 // --- Hide Chapter Navigation Elements Functionality ---
 function hideChapterNavigation() {
-    const navContainers = document.querySelectorAll('.MuiStack-root.muiltr-1en8pj3, .MuiStack-root.muiltr-1f9h8mh');
+    const navContainers = document.querySelectorAll('.MuiStack-root.muiltr-1en8pj3, .MuiStack-root.muiltr-1f9h8mh, .MuiStack-root.muirtl-1bq7nwh');
     navContainers.forEach(container => {
         container.textContent = '';
-    });
-}
-
-// --- Hide UI With Page Numbers ---
-function hideNumberedContainers() {
-    const stacks = document.querySelectorAll('div.MuiStack-root');
-    stacks.forEach(stack => {
-        const ariaLabeledBoxes = stack.querySelectorAll('[aria-label]');
-        let numericCount = 0;
-        ariaLabeledBoxes.forEach(box => {
-            const label = box.getAttribute('aria-label');
-            if (label && /^\d+$/.test(label)) {
-                numericCount++;
-            }
-        });
-        if (numericCount >= 1) {
-            stack.style.display = 'none';
-        }
     });
 }
 
@@ -167,11 +142,6 @@ function setupBlankAltObservers() {
         }
     });
 
-    // Observer for hiding numbered containers (runs continuously)
-    blankAltConfig.hideNumberedObserver = new MutationObserver(() => {
-        hideNumberedContainers();
-    });
-
     // NEW: Observer for hiding chapter navigation elements (runs continuously)
     blankAltConfig.hideChapterNavObserver = new MutationObserver(() => {
         hideChapterNavigation();
@@ -179,17 +149,15 @@ function setupBlankAltObservers() {
 
     // Start observers
     blankAltConfig.blankAltObserver.observe(document.body, { childList: true, subtree: true });
-    blankAltConfig.hideNumberedObserver.observe(document.body, { childList: true, subtree: true });
     blankAltConfig.hideChapterNavObserver.observe(document.body, { childList: true, subtree: true }); // NEW
 
     // Run on load
     window.addEventListener('load', () => {
         blankImageAlts();
-        hideNumberedContainers();
         hideChapterNavigation(); // NEW
     });
 
-    logDebug("Blank Image Alt Attributes & Hide Numbered Container & Chapter Navigation Hider functionality initialized"); // Updated log message
+    logDebug("Blank Image Alt Attributes & Chapter Navigation Hider functionality initialized"); // Updated log message
 }
 
     // --- OCR Duplicate Punctuation Remover Functions ---
