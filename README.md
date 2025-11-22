@@ -2,7 +2,7 @@
 Anki/Mining:
 *   Anki Export reworked (images should work on ankiconnect android)
 *   Added image picker for choosing which active image is being cropped for anki (useful for when multiple pages are active at once like in continuous horizontal and dual page)
-*   Removed HTML that would make it into the sentence field of anki cards (might make UI navigation slightly annoying on specific setups)
+*   Removed HTML that would make it into the sentence field of anki cards
 *   Editable text boxes by double clicking
 *   Changes done to text by merging, deleting or editing should save to cache (if you are using my edit of server.py)
 
