@@ -1,4 +1,12 @@
 ## Personal changes:
+OCR:
+*   Added Manga-OCR paired with Meiki Text detect for better local OCR  
+-Download  **[meiki.text.detect.small.v0.onnx](https://huggingface.co/rtr46/meiki.text.detect.v0/tree/main)** and put in the `ocr-server` folder  
+-Run this command in the `ocr-server` folder:  
+ 
+    > ```
+    > uv run server.py -e=meikimanga
+    > ```
 Anki/Mining:
 *   Anki Export reworked (images should work on ankiconnect android)
 *   Added image picker for choosing which active image is being cropped for anki (useful for when multiple pages are active at once like in continuous horizontal and dual page)
