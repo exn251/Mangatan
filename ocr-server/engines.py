@@ -6,7 +6,9 @@ from typing import TypedDict
 import chrome_lens_py
 from chrome_lens_py.utils.lens_betterproto import LensOverlayObjectsResponse
 from PIL.Image import Image
-
+import cv2
+import numpy as np
+import onnxruntime as ort
 
 class BoundingBox(TypedDict):
     x: float
@@ -233,6 +235,224 @@ class GoogleLens(Engine):
 
         return output_json
 
+class MeikiMangaOCR(Engine):
+    """
+    OCR engine that uses Meiki text detection to find text boxes,
+    then runs Manga OCR on each detected region.
+    """
+    
+    def __init__(
+        self, 
+        model_path: str = "meiki.text.detect.small.v0.onnx",
+        confidence_threshold: float = 0.5,
+        pretrained_model_name_or_path: str = 'kha-white/manga-ocr-base',
+        force_cpu: bool = False
+    ):
+        """
+        Initialize the MeikiMangaOCR engine.
+        
+        Args:
+            model_path: Path to the meiki ONNX model
+            confidence_threshold: Minimum confidence for text detection (0.0-1.0)
+            pretrained_model_name_or_path: Manga OCR model name or path
+            force_cpu: Force manga-ocr to use CPU
+        """
+        # Initialize text detection model
+        try:
+            self.detection_session = ort.InferenceSession(
+                model_path, 
+                providers=['CPUExecutionProvider']
+            )
+            self.model_size = 640
+            self.confidence_threshold = confidence_threshold
+            print(f"[MeikiMangaOCR] Loaded text detection model: {model_path}")
+        except Exception as e:
+            print(f"[Error] Failed to load Meiki text detection model: {e}")
+            raise
+        
+        # Initialize manga-ocr
+        try:
+            from manga_ocr import MangaOcr as MOCR
+            import re
+            import logging
+            from loguru import logger
+            
+            # Disable verbose logging
+            logger.disable('manga_ocr')
+            logging.getLogger('transformers').setLevel(logging.ERROR)
+            
+            # Override post-processing to remove spaces
+            from manga_ocr import ocr
+            def empty_post_process(text):
+                text = re.sub(r'\s+', '', text)
+                return text
+            ocr.post_process = empty_post_process
+            
+            self.manga_ocr = MOCR(pretrained_model_name_or_path, force_cpu)
+            print(f"[MeikiMangaOCR] Loaded Manga OCR model: {pretrained_model_name_or_path}")
+        except ImportError as e:
+            print(f"[Error] manga-ocr not installed: {e}")
+            raise
+        except Exception as e:
+            print(f"[Error] Failed to initialize Manga OCR: {e}")
+            raise
+
+    def _resize_and_pad(self, image: np.ndarray, size: int):
+        """
+        Resize and pad image to model input size, maintaining aspect ratio.
+        
+        Returns:
+            - Padded image
+            - Resize ratio
+            - Padding width
+            - Padding height
+        """
+        original_height, original_width, _ = image.shape
+        
+        ratio = min(size / original_width, size / original_height)
+        new_width = int(original_width * ratio)
+        new_height = int(original_height * ratio)
+        
+        resized_image = cv2.resize(
+            image, 
+            (new_width, new_height), 
+            interpolation=cv2.INTER_LINEAR
+        )
+        
+        padded_image = np.zeros((size, size, 3), dtype=np.uint8)
+        pad_w = (size - new_width) // 2
+        pad_h = (size - new_height) // 2
+        padded_image[pad_h:pad_h + new_height, pad_w:pad_w + new_width] = resized_image
+        
+        return padded_image, ratio, pad_w, pad_h
+
+    def _detect_text_boxes(self, image: np.ndarray):
+        """
+        Run text detection on the image.
+        
+        Returns:
+            List of bounding boxes in original image coordinates: [(x1, y1, x2, y2), ...]
+        """
+        # Prepare image for model
+        padded_image, ratio, pad_w, pad_h = self._resize_and_pad(image, self.model_size)
+        
+        # Normalize and transpose
+        img_normalized = padded_image.astype(np.float32) / 255.0
+        img_transposed = np.transpose(img_normalized, (2, 0, 1))
+        image_input_tensor = np.expand_dims(img_transposed, axis=0)
+        
+        # Prepare size input
+        sizes_input_tensor = np.array([[self.model_size, self.model_size]], dtype=np.int64)
+        
+        # Run inference
+        input_names = [inp.name for inp in self.detection_session.get_inputs()]
+        inputs = {
+            input_names[0]: image_input_tensor,
+            input_names[1]: sizes_input_tensor
+        }
+        
+        outputs = self.detection_session.run(None, inputs)
+        labels, boxes, scores = outputs
+        
+        # Post-process: convert to original image coordinates
+        boxes = boxes[0]
+        scores = scores[0]
+        
+        original_boxes = []
+        for box, score in zip(boxes, scores):
+            if score > self.confidence_threshold:
+                x_min, y_min, x_max, y_max = box
+                
+                # Remove padding
+                x_min_unpadded = x_min - pad_w
+                y_min_unpadded = y_min - pad_h
+                x_max_unpadded = x_max - pad_w
+                y_max_unpadded = y_max - pad_h
+                
+                # Scale back to original size
+                final_x_min = int(x_min_unpadded / ratio)
+                final_y_min = int(y_min_unpadded / ratio)
+                final_x_max = int(x_max_unpadded / ratio)
+                final_y_max = int(y_max_unpadded / ratio)
+                
+                # Clamp to image bounds
+                final_x_min = max(0, final_x_min)
+                final_y_min = max(0, final_y_min)
+                final_x_max = min(image.shape[1], final_x_max)
+                final_y_max = min(image.shape[0], final_y_max)
+                
+                original_boxes.append((final_x_min, final_y_min, final_x_max, final_y_max))
+        
+        return original_boxes
+
+    async def ocr(self, img: Image) -> list[Bubble]:
+        """
+        Run OCR on the image: detect text boxes, then run manga-ocr on each.
+        
+        Args:
+            img: PIL Image to process
+            
+        Returns:
+            List of Bubble objects with detected text and bounding boxes
+        """
+        # Convert PIL to numpy array (BGR for OpenCV compatibility)
+        img_array = cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
+        original_height, original_width = img_array.shape[:2]
+        
+        # Detect text boxes
+        boxes = self._detect_text_boxes(img_array)
+        
+        if not boxes:
+            print("[MeikiMangaOCR] No text boxes detected")
+            return []
+        
+        print(f"[MeikiMangaOCR] Detected {len(boxes)} text boxes")
+        
+        # Process each detected box
+        bubbles = []
+        for i, (x1, y1, x2, y2) in enumerate(boxes):
+            try:
+                # Crop the text region from original PIL image
+                crop = img.crop((x1, y1, x2, y2))
+                
+                # Skip if crop is too small
+                if crop.width < 10 or crop.height < 10:
+                    continue
+                
+                # Run manga-ocr on the cropped region
+                text = self.manga_ocr(crop)
+                
+                if not text or not text.strip():
+                    continue
+                
+                # Calculate normalized bounding box
+                width = x2 - x1
+                height = y2 - y1
+                
+                # Determine orientation based on aspect ratio
+                # Vertical text typically has height > width
+                orientation = 90.0 if height > width else 0.0
+                
+                bubble = Bubble(
+                    text=text.strip(),
+                    tightBoundingBox=BoundingBox(
+                        x=x1 / original_width,
+                        y=y1 / original_height,
+                        width=width / original_width,
+                        height=height / original_height,
+                    ),
+                    orientation=orientation,
+                    font_size=0.04,
+                    confidence=0.95,  # Manga OCR typically has high confidence
+                )
+                bubbles.append(bubble)
+                
+            except Exception as e:
+                print(f"[Warning] Failed to process box {i}: {e}")
+                continue
+        
+        print(f"[MeikiMangaOCR] Successfully processed {len(bubbles)} text regions")
+        return bubbles
 
 # TODO: get a mac
 class AppleVision(Engine):
@@ -252,5 +472,7 @@ def initialize_engine(engine_name: str) -> Engine:
         return GoogleLens()
     elif engine_name == "oneocr":
         return OneOCR()
+    elif engine_name == "meikimanga":
+        return MeikiMangaOCR()
     else:
         raise ValueError(f"Invalid engine: {engine_name}")
