@@ -16,6 +16,8 @@
 // @connect      127.0.0.1
 // @connect      192.168.0.
 // @connect      localhost
+// @downloadURL  https://github.com/exn251/Mangatan/raw/refs/heads/main/desktop-script.user.js
+// @updateURL    https://github.com/exn251/Mangatan/raw/refs/heads/main/desktop-script.user.js
 // ==/UserScript==
 
 (function () {
