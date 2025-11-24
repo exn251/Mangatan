@@ -333,6 +333,9 @@ class MeikiMangaOCR(Engine):
         Returns:
             List of bounding boxes in original image coordinates: [(x1, y1, x2, y2), ...]
         """
+        # Get image dimensions
+        img_height, img_width = image.shape[:2]
+        
         # Prepare image for model
         padded_image, ratio, pad_w, pad_h = self._resize_and_pad(image, self.model_size)
         
@@ -375,13 +378,27 @@ class MeikiMangaOCR(Engine):
                 final_x_max = int(x_max_unpadded / ratio)
                 final_y_max = int(y_max_unpadded / ratio)
                 
-                # Clamp to image bounds
+                # Clamp to image boundaries
                 final_x_min = max(0, final_x_min)
                 final_y_min = max(0, final_y_min)
-                final_x_max = min(image.shape[1], final_x_max)
-                final_y_max = min(image.shape[0], final_y_max)
+                final_x_max = min(img_width, final_x_max)
+                final_y_max = min(img_height, final_y_max)
                 
-                original_boxes.append((final_x_min, final_y_min, final_x_max, final_y_max))
+                # Apply offset adjustment (shift 3 pixels right and 1 pixels down)
+                final_x_min += 3
+                final_x_max += 3
+                final_y_min += 1
+                final_y_max += 1
+                
+                # Clamp again after offset to ensure we're still within bounds
+                final_x_min = max(0, final_x_min)
+                final_y_min = max(0, final_y_min)
+                final_x_max = min(img_width, final_x_max)
+                final_y_max = min(img_height, final_y_max)
+                
+                # Only add the box if it's still valid after offset
+                if final_x_min < final_x_max and final_y_min < final_y_max:
+                    original_boxes.append((final_x_min, final_y_min, final_x_max, final_y_max))
         
         return original_boxes
 
@@ -453,7 +470,6 @@ class MeikiMangaOCR(Engine):
         
         print(f"[MeikiMangaOCR] Successfully processed {len(bubbles)} text regions")
         return bubbles
-
 # TODO: get a mac
 class AppleVision(Engine):
     def __init__(self):
