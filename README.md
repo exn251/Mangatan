@@ -1,7 +1,7 @@
 ## Personal changes:
 OCR:
 *   Added Manga-OCR paired with Meiki Text detect for better local OCR  
--Download  **[meiki.text.detect.small.v0.onnx](https://huggingface.co/rtr46/meiki.text.detect.v0/tree/main)** and put in the `ocr-server` folder  
+-Download  **[meiki.text.detect.small.v0.onnx](https://huggingface.co/rtr46/meiki.text.detect.v0/tree/main)** and put it in the `ocr-server` folder  
 -Run this command in the `ocr-server` folder:  
  
     > ```
