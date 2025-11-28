@@ -77,7 +77,7 @@
 
     // --- Blank Image Alt Attributes & Hide Numbered Container Functionality ---
     const blankAltConfig = {
-        containerSelector: '.MuiBox-root.muiltr-k008qs',
+        containerSelector: '.MuiBox-root.muiltr-1noqzsz',
         blankAltObserver: null,
         hideNumberedObserver: null
     };
@@ -107,42 +107,49 @@
         }
     }
 
-    // --- Hide Chapter Navigation Elements Functionality ---
-    function hideChapterNavigation() {
-        const navContainers = document.querySelectorAll('.MuiStack-root.muiltr-1en8pj3, .MuiStack-root.muiltr-1f9h8mh, .MuiStack-root.muirtl-1bq7nwh');
-        navContainers.forEach(container => {
-            container.textContent = '';
-        });
-    }
+// --- Hide Chapter Navigation Elements Functionality ---
+function hideChapterNavigation() {
+    const elementsToHide = document.querySelectorAll(`
+        .MuiStack-root.muiltr-1en8pj3,
+        .MuiStack-root.muiltr-1f9h8mh,
+        p.MuiTypography-root.MuiTypography-body1.muiltr-11hsbvc,
+        p.MuiTypography-root.MuiTypography-body1.muiltr-1vljxn2,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-11hsbvc,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-1vljxn2,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-b1l7y4
+    `);
 
-    function setupBlankAltObservers() {
-        // Main observer for initial container detection
-        blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
-            const container = document.querySelector(blankAltConfig.containerSelector);
-            if (container) {
-                blankImageAlts();
-                observer.disconnect();
+    elementsToHide.forEach(element => {
+        element.textContent = '';
+    });
+}
 
-                // Set up observer for dynamic images
-                const imageObserver = new MutationObserver((mutations) => {
-                    mutations.forEach(mutation => {
-                        mutation.addedNodes.forEach(node => {
-                            if (node.nodeType === 1) {
-                                if (node.tagName === 'IMG') {
-                                    node.setAttribute('alt', '');
-                                    logDebug('Blanked alt for new image: ' + node.src);
-                                }
-                                node.querySelectorAll('img').forEach(img => {
-                                    img.setAttribute('alt', '');
-                                    logDebug('Blanked alt for nested new image: ' + img.src);
-                                });
+function setupBlankAltObservers() {
+    // Main observer for initial container detection
+    blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
+        const container = document.querySelector(blankAltConfig.containerSelector);
+        if (container) {
+            blankImageAlts();
+            observer.disconnect();
+
+            // Set up observer for dynamic images
+            const imageObserver = new MutationObserver((mutations) => {
+                mutations.forEach(mutation => {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            if (node.tagName === 'IMG') {
+                                node.setAttribute('alt', '');
                             }
-                        });
+                            node.querySelectorAll('img').forEach(img => {
+                                img.setAttribute('alt', '');
+                            });
+                        }
                     });
                 });
-                imageObserver.observe(container, { childList: true, subtree: true });
-            }
-        });
+            });
+            imageObserver.observe(container, { childList: true, subtree: true });
+        }
+    });
 
         // NEW: Observer for hiding chapter navigation elements (runs continuously)
         blankAltConfig.hideChapterNavObserver = new MutationObserver(() => {
@@ -181,6 +188,9 @@
         // Replace one or more EN DASH with HORIZONTAL BAR
         text = text.replace(/[ ]*\u2013+/g, '\u2015');
 
+        // Replace colon with ellipsis
+        text = text.replace(/[ ]*:+[ ]*/g, '\u2026');
+
         // Clean up any leftover single ? or ! or : that might remain after mixed sequences
         text = text.replace(/^[!?:]+$/g, ''); // Remove if entire string is just !, ? or :
         text = text.replace(/([⁉⁈‼⁇])[!?:]+/g, '$1'); // Remove any !, ? or : after special punctuation
@@ -190,34 +200,6 @@
         text = text.replace(/\u0020/g, '');
 
         return text;
-    }
-
-    function setupPunctuationRemover() {
-        // Store original methods to avoid conflicts
-        punctuationConfig.originalSetAttribute = Element.prototype.setAttribute;
-        punctuationConfig.originalSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
-
-        // Intercept setAttribute for OCR text boxes
-        Element.prototype.setAttribute = function (name, value) {
-            if (this.classList && this.classList.contains('gemini-ocr-text-box') &&
-                (name === 'data-full-text' || name === 'data-original-text')) {
-                value = cleanPunctuation(value);
-            }
-            return punctuationConfig.originalSetAttribute.call(this, name, value);
-        };
-
-        // Intercept textContent changes for OCR text boxes
-        Object.defineProperty(Node.prototype, 'textContent', {
-            set: function (value) {
-                if (this.classList && this.classList.contains('gemini-ocr-text-box')) {
-                    value = cleanPunctuation(value);
-                }
-                return punctuationConfig.originalSetTextContent.call(this, value);
-            },
-            get: Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get
-        });
-
-        logDebug("OCR Duplicate Punctuation Remover: Active");
     }
 
     // --- [ROBUST] Navigation Handling & State Reset ---
@@ -743,9 +725,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
 
     // Use the text from dataset which preserves line breaks
     let combinedText = targetText + (settings.addSpaceOnMerge ? ' ' : "\u200B") + sourceText;
-
-    // Apply punctuation cleaning to the merged text
-    combinedText = cleanPunctuation(combinedText);
 
     const tb = targetData.tightBoundingBox;
     const sb = sourceData.tightBoundingBox;
@@ -2386,7 +2365,6 @@ function applyTheme() {
         logDebug("Initializing HYBRID engine with Focus Color (BlendMode). Hover Stability Patches Applied. Font Size Calculation Fix Applied. Site Matching Debug Included. OCR Error Resilience Added. Editable Text Boxes Enabled. Image Export Fix Applied. Blank Alt Attributes & Hide Numbered Container & Duplicate Punctuation Remover Enabled. Merge Selection Stability Fixed. Multi-Image Selector Added.");
 
         setupBlankAltObservers();
-        setupPunctuationRemover();
 
         resizeObserver = new ResizeObserver(handleResize);
         intersectionObserver = new IntersectionObserver(handleIntersection, { rootMargin: '100px 0px' });
