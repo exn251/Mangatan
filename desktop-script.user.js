@@ -77,7 +77,7 @@
 
     // --- Blank Image Alt Attributes & Hide Numbered Container Functionality ---
     const blankAltConfig = {
-        containerSelector: '.MuiBox-root.muiltr-k008qs',
+        containerSelector: '.MuiBox-root.muiltr-1noqzsz',
         blankAltObserver: null,
         hideNumberedObserver: null
     };
@@ -107,42 +107,49 @@
         }
     }
 
-    // --- Hide Chapter Navigation Elements Functionality ---
-    function hideChapterNavigation() {
-        const navContainers = document.querySelectorAll('.MuiStack-root.muiltr-1en8pj3, .MuiStack-root.muiltr-1f9h8mh, .MuiStack-root.muirtl-1bq7nwh');
-        navContainers.forEach(container => {
-            container.textContent = '';
-        });
-    }
+// --- Hide Chapter Navigation Elements Functionality ---
+function hideChapterNavigation() {
+    const elementsToHide = document.querySelectorAll(`
+        .MuiStack-root.muiltr-1en8pj3,
+        .MuiStack-root.muiltr-1f9h8mh,
+        p.MuiTypography-root.MuiTypography-body1.muiltr-11hsbvc,
+        p.MuiTypography-root.MuiTypography-body1.muiltr-1vljxn2,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-11hsbvc,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-1vljxn2,
+        p.MuiTypography-root.MuiTypography-body1.muirtl-b1l7y4
+    `);
 
-    function setupBlankAltObservers() {
-        // Main observer for initial container detection
-        blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
-            const container = document.querySelector(blankAltConfig.containerSelector);
-            if (container) {
-                blankImageAlts();
-                observer.disconnect();
+    elementsToHide.forEach(element => {
+        element.textContent = '';
+    });
+}
 
-                // Set up observer for dynamic images
-                const imageObserver = new MutationObserver((mutations) => {
-                    mutations.forEach(mutation => {
-                        mutation.addedNodes.forEach(node => {
-                            if (node.nodeType === 1) {
-                                if (node.tagName === 'IMG') {
-                                    node.setAttribute('alt', '');
-                                    logDebug('Blanked alt for new image: ' + node.src);
-                                }
-                                node.querySelectorAll('img').forEach(img => {
-                                    img.setAttribute('alt', '');
-                                    logDebug('Blanked alt for nested new image: ' + img.src);
-                                });
+function setupBlankAltObservers() {
+    // Main observer for initial container detection
+    blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
+        const container = document.querySelector(blankAltConfig.containerSelector);
+        if (container) {
+            blankImageAlts();
+            observer.disconnect();
+
+            // Set up observer for dynamic images
+            const imageObserver = new MutationObserver((mutations) => {
+                mutations.forEach(mutation => {
+                    mutation.addedNodes.forEach(node => {
+                        if (node.nodeType === 1) {
+                            if (node.tagName === 'IMG') {
+                                node.setAttribute('alt', '');
                             }
-                        });
+                            node.querySelectorAll('img').forEach(img => {
+                                img.setAttribute('alt', '');
+                            });
+                        }
                     });
                 });
-                imageObserver.observe(container, { childList: true, subtree: true });
-            }
-        });
+            });
+            imageObserver.observe(container, { childList: true, subtree: true });
+        }
+    });
 
         // NEW: Observer for hiding chapter navigation elements (runs continuously)
         blankAltConfig.hideChapterNavObserver = new MutationObserver(() => {
@@ -173,12 +180,16 @@
         text = text.replace(/[ ]*(!\?)+/g, '⁉');
         text = text.replace(/[ ]*(\?!)+/g, '⁈');
         text = text.replace(/[ ]*\u2026+/g, '\u2026');
+        text = text.replace(/[ ]*\u30FB\u30FB+/g, '\u2026');
 
         // Replace one or more hyphens with prolonged sound mark
         text = text.replace(/[ ]*-+/g, '\u30FC');
 
         // Replace one or more EN DASH with HORIZONTAL BAR
         text = text.replace(/[ ]*\u2013+/g, '\u2015');
+
+        // Replace colon with ellipsis
+        text = text.replace(/[ ]*:+[ ]*/g, '\u2026');
 
         // Clean up any leftover single ? or ! or : that might remain after mixed sequences
         text = text.replace(/^[!?:]+$/g, ''); // Remove if entire string is just !, ? or :
@@ -189,34 +200,6 @@
         text = text.replace(/\u0020/g, '');
 
         return text;
-    }
-
-    function setupPunctuationRemover() {
-        // Store original methods to avoid conflicts
-        punctuationConfig.originalSetAttribute = Element.prototype.setAttribute;
-        punctuationConfig.originalSetTextContent = Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').set;
-
-        // Intercept setAttribute for OCR text boxes
-        Element.prototype.setAttribute = function (name, value) {
-            if (this.classList && this.classList.contains('gemini-ocr-text-box') &&
-                (name === 'data-full-text' || name === 'data-original-text')) {
-                value = cleanPunctuation(value);
-            }
-            return punctuationConfig.originalSetAttribute.call(this, name, value);
-        };
-
-        // Intercept textContent changes for OCR text boxes
-        Object.defineProperty(Node.prototype, 'textContent', {
-            set: function (value) {
-                if (this.classList && this.classList.contains('gemini-ocr-text-box')) {
-                    value = cleanPunctuation(value);
-                }
-                return punctuationConfig.originalSetTextContent.call(this, value);
-            },
-            get: Object.getOwnPropertyDescriptor(Node.prototype, 'textContent').get
-        });
-
-        logDebug("OCR Duplicate Punctuation Remover: Active");
     }
 
     // --- [ROBUST] Navigation Handling & State Reset ---
@@ -438,17 +421,19 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     if (!measurementSpan || !box || !imgRect || imgRect.width === 0 || imgRect.height === 0) return;
     const ocrData = box._ocrData, text = ocrData.text || '';
 
-
     // Use adjusted dimensions for fitting calculations with **100%** target usage
     const availableWidth = (box.offsetWidth + settings.boundingBoxAdjustment) * 1.00;
     const availableHeight = (box.offsetHeight + settings.boundingBoxAdjustment) * 1.00;
 
     if (!text || availableWidth <= 0 || availableHeight <= 0) return;
 
+    // --- NEW: MINIMUM FONT SIZE ENFORCEMENT WITH BOX ADJUSTMENT ---
+    const MINIMUM_FONT_SIZE = 24; // Your new minimum size
+
     // Determine if this is a merged box (contains line breaks)
     const isMerged = ocrData.isMerged || text.includes('\u200B');
 
-    // --- REFINED LOGIC: Multi-line fitting with preserved line breaks for merged boxes ---
+    // --- REFINED LOGIC: Multi-line fitting with box adjustment for minimum font size ---
     const findBestFitSize = (isVerticalSearch) => {
         // Set writing mode for measurement
         measurementSpan.style.writingMode = isVerticalSearch ? 'vertical-rl' : 'horizontal-tb';
@@ -550,17 +535,63 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
         finalFontSize = isVertical ? verticalFitSize : horizontalFitSize;
     }
 
-    // --- OCR ERROR RESILIENCE CHECK ---
-    const minReadableFontSize = 8;
-    let effectiveFinalFontSize = finalFontSize;
-    if (effectiveFinalFontSize < minReadableFontSize) {
-        logDebug(`Potentially problematic OCR text detected for box: "${text.substring(0, 20)}..." (Calculated size: ${finalFontSize}, enforced min: ${minReadableFontSize})`);
-        effectiveFinalFontSize = minReadableFontSize;
+    // --- NEW: ADJUST BOX SIZE IF MINIMUM FONT SIZE REQUIRES IT ---
+    const multiplier = isVertical ? settings.fontMultiplierVertical : settings.fontMultiplierHorizontal;
+    const requiredFontSize = Math.max(finalFontSize, MINIMUM_FONT_SIZE);
+
+    // If we're enforcing a minimum that's larger than the optimal fit, adjust the box
+    if (requiredFontSize > finalFontSize) {
+        // Measure the text at the required minimum size
+        measurementSpan.style.fontSize = `${requiredFontSize * multiplier}px`;
+        measurementSpan.style.writingMode = isVertical ? 'vertical-rl' : 'horizontal-tb';
+        measurementSpan.style.whiteSpace = isMerged ? 'pre' : 'normal';
+
+        if (isMerged) {
+            measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
+        } else {
+            measurementSpan.textContent = text;
+        }
+
+        const requiredWidth = measurementSpan.offsetWidth;
+        const requiredHeight = measurementSpan.offsetHeight;
+
+        // Adjust box dimensions if needed (add 10% padding)
+        const scaleFactor = 1.1; // 10% padding
+        const scaledRequiredWidth = requiredWidth * scaleFactor;
+        const scaledRequiredHeight = requiredHeight * scaleFactor;
+
+        // Convert required dimensions to percentages of the image
+        const imgWidth = imgRect.width;
+        const imgHeight = imgRect.height;
+
+        if (imgWidth > 0 && imgHeight > 0) {
+            const currentWidthPercent = parseFloat(box.style.width);
+            const currentHeightPercent = parseFloat(box.style.height);
+
+            const requiredWidthPercent = (scaledRequiredWidth / imgWidth) * 100;
+            const requiredHeightPercent = (scaledRequiredHeight / imgHeight) * 100;
+
+            // Only adjust if significantly larger than current box
+            if (requiredWidthPercent > currentWidthPercent * 1.2 ||
+                requiredHeightPercent > currentHeightPercent * 1.2) {
+
+                // Adjust box position and size to center the text better
+                const newWidth = Math.max(currentWidthPercent, requiredWidthPercent);
+                const newHeight = Math.max(currentHeightPercent, requiredHeightPercent);
+
+                const widthAdjustment = (newWidth - currentWidthPercent) / 2;
+                const heightAdjustment = (newHeight - currentHeightPercent) / 2;
+
+                box.style.width = `${newWidth}%`;
+                box.style.height = `${newHeight}%`;
+                box.style.left = `${Math.max(0, parseFloat(box.style.left) - widthAdjustment)}%`;
+                box.style.top = `${Math.max(0, parseFloat(box.style.top) - heightAdjustment)}%`;
+            }
+        }
     }
 
-    // Apply multiplier setting
-    const multiplier = isVertical ? settings.fontMultiplierVertical : settings.fontMultiplierHorizontal;
-    box.style.fontSize = `${effectiveFinalFontSize * multiplier}px`;
+    // Apply the final font size
+    box.style.fontSize = `${requiredFontSize * multiplier}px`;
 
     // Apply the vertical class if necessary
     box.classList.toggle('gemini-ocr-text-vertical', isVertical);
@@ -576,7 +607,6 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
         box.textContent = text;
     }
 }
-
 // ---------------------------------------------------------------------------
 
 function calculateAndApplyOptimalStyles_Optimized(overlay, imgRect) {
@@ -695,9 +725,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
 
     // Use the text from dataset which preserves line breaks
     let combinedText = targetText + (settings.addSpaceOnMerge ? ' ' : "\u200B") + sourceText;
-
-    // Apply punctuation cleaning to the merged text
-    combinedText = cleanPunctuation(combinedText);
 
     const tb = targetData.tightBoundingBox;
     const sb = sourceData.tightBoundingBox;
@@ -1775,12 +1802,23 @@ function displayOcrResults(targetImg) {
     }
 
     // --- UI, Styles and Initialization ---
-    function applyTheme() {
-        const theme = COLOR_THEMES[settings.colorTheme] || COLOR_THEMES.blue;
-        const cssVars = `:root { --accent: ${theme.accent||'72,144,255'}; --background: ${theme.background||'229,243,255'}; --modal-header-color: rgba(${theme.accent||'72,144,255'}, 1); --ocr-dimmed-opacity: ${settings.dimmedOpacity}; --ocr-focus-scale: ${settings.focusScaleMultiplier}; }`;
-        let styleTag = document.getElementById('gemini-ocr-dynamic-styles');
-        if (!styleTag) { styleTag = document.createElement('style'); styleTag.id = 'gemini-ocr-dynamic-styles'; document.head.appendChild(styleTag); }
-        styleTag.textContent = cssVars;
+function applyTheme() {
+    const theme = COLOR_THEMES[settings.colorTheme] || COLOR_THEMES.blue;
+    const cssVars = `:root {
+        --accent: ${theme.accent||'72,144,255'};
+        --background: ${theme.background||'229,243,255'};
+        --modal-header-color: rgba(${theme.accent||'72,144,255'}, 1);
+        --ocr-dimmed-opacity: ${settings.dimmedOpacity};
+        --ocr-focus-scale: ${settings.focusScaleMultiplier};
+    }`;
+    let styleTag = document.getElementById('gemini-ocr-dynamic-styles');
+    if (!styleTag) {
+        styleTag = document.createElement('style');
+        styleTag.id = 'gemini-ocr-dynamic-styles';
+        document.head.appendChild(styleTag);
+    }
+    styleTag.textContent = cssVars;
+
 
         document.body.className = document.body.className.replace(/\bocr-theme-\S+/g, '');
         document.body.classList.add(`ocr-theme-${settings.colorTheme}`);
@@ -1803,7 +1841,46 @@ function displayOcrResults(targetImg) {
             .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
             .gemini-ocr-decoupled-overlay.is-focused .gemini-ocr-text-box { pointer-events: auto; }
             ::selection { background-color: rgba(var(--accent), 1); color: #FFFFFF; }
-            .gemini-ocr-text-box { position: absolute; display: flex; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; user-select: text; cursor: pointer; transition: all 0.2s ease-in-out; overflow: hidden; font-family: 'Noto Sans JP', sans-serif; font-weight: 600; padding: 0px; border-radius: 4px; border: none; text-shadow: none; pointer-events: none; }
+.gemini-ocr-text-box {
+    position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    box-sizing: border-box;
+    user-select: text;
+    cursor: pointer;
+    transition: all 0.2s ease-in-out;
+    overflow: visible !important; /* Changed from hidden to visible */
+    font-family: 'Noto Sans JP', sans-serif;
+    font-weight: 600;
+    padding: 2px !important; /* Add some padding */
+    border-radius: 4px;
+    border: none;
+    text-shadow: none;
+    pointer-events: none;
+    min-height: 30px !important; /* Increased minimum height */
+    min-width: 30px !important;  /* Increased minimum width */
+}
+
+/* Ensure focused boxes can overflow properly */
+.interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+.interaction-mode-click.is-focused .manual-highlight {
+    z-index: 1;
+    transform: scale(var(--ocr-focus-scale, 1.1)) !important;
+    overflow: visible !important;
+    min-height: 40px !important; /* Larger minimum when focused */
+    min-width: 40px !important;
+}
+
+/* Mobile responsive adjustments */
+@media (max-width: 768px) {
+    .gemini-ocr-text-box {
+        min-width: 40px !important;
+        min-height: 40px !important;
+        font-size: 24px !important; /* Enforce your minimum on mobile */
+    }
+}
             .gemini-ocr-text-box.selected-for-merge { outline: 3px solid #f1c40f !important; outline-offset: 2px; box-shadow: 0 0 12px #f1c40f !important; z-index: 2; }
             body.ocr-brightness-light .gemini-ocr-text-box { background: rgba(var(--background), 1); color: rgba(var(--accent), 0.5); box-shadow: 0 0 0 0.1em rgba(var(--background), 1); }
             body.ocr-brightness-light .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
@@ -1818,8 +1895,13 @@ function displayOcrResults(targetImg) {
             .ocr-focus-color-mode-difference .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
             .ocr-focus-color-mode-difference .interaction-mode-click.is-focused .manual-highlight { color: white !important; mix-blend-mode: difference; background: transparent !important; box-shadow: none !important; }
             .gemini-ocr-text-vertical { writing-mode: vertical-rl; text-orientation: upright; }
-            .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            .interaction-mode-click.is-focused .manual-highlight { z-index: 1; transform: scale(var(--ocr-focus-scale)); overflow: visible !important; }
+.interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+.interaction-mode-click.is-focused .manual-highlight {
+    z-index: 1;
+    transform: scale(var(--ocr-focus-scale, 1.1)) !important; /* Added !important and fallback */
+    overflow: visible !important;
+}
+
             .interaction-mode-hover.is-focused:not(.solo-hover-mode):has(.gemini-ocr-text-box:hover) .gemini-ocr-text-box:not(:hover),
             .interaction-mode-click.is-focused.has-manual-highlight .gemini-ocr-text-box:not(.manual-highlight) { opacity: var(--ocr-dimmed-opacity); }
             .solo-hover-mode.is-focused .gemini-ocr-text-box { opacity: 0; }
@@ -1851,11 +1933,13 @@ function displayOcrResults(targetImg) {
             .gemini-ocr-chapter-batch-btn { font-family: "Roboto","Helvetica","Arial",sans-serif; font-weight: 500; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(240,153,136,0.5); color: #f09988; background-color: transparent; cursor: pointer; margin-right: 4px; transition: all 150ms; min-width: 80px; text-align: center; } .gemini-ocr-chapter-batch-btn:hover { background-color: rgba(240,153,136,0.08); } .gemini-ocr-chapter-batch-btn:disabled { color: grey; border-color: grey; cursor: wait; } #gemini-ocr-settings-button { position: fixed; bottom: 15px; right: 15px; z-index: 2147483647; background: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.5); user-select: none; transition: all 0.2s ease; line-height: 1; } #gemini-ocr-settings-button:hover { background: #2A2D31; transform: scale(1.1); } #gemini-ocr-global-anki-export-btn { position: fixed; bottom: 75px; right: 15px; z-index: 2147483646; background-color: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 30px; cursor: pointer; transition: all 0.2s ease; user-select: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; line-height: 1; } #gemini-ocr-global-anki-export-btn:hover { background-color: #27ae60; transform: scale(1.1); } #gemini-ocr-global-anki-export-btn:disabled { background-color: #95a5a6; cursor: wait; transform: none; } #gemini-ocr-global-anki-export-btn.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: scale(0.5); } .gemini-ocr-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #1A1D21; border: 1px solid var(--modal-header-color, #00BFFF); border-radius: 15px; z-index: 2147483647; color: #EAEAEA; font-family: sans-serif; box-shadow: 0 8px 32px 0 rgba(0,0,0,0.5); width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; } .gemini-ocr-modal.is-hidden { display: none; } .gemini-ocr-modal-header { padding: 20px 25px; border-bottom: 1px solid #444; } .gemini-ocr-modal-header h2 { margin: 0; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-modal-content { padding: 10px 25px; overflow-y: auto; flex-grow: 1; } .gemini-ocr-modal-footer { padding: 15px 25px; border-top: 1px solid #444; display: flex; justify-content: flex-start; gap: 10px; align-items: center; } .gemini-ocr-modal-footer button:last-of-type { margin-left: auto; } .gemini-ocr-modal h3 { font-size: 1.1em; margin: 15px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 15px; align-items: center; } .full-width { grid-column: 1 / -1; } .gemini-ocr-modal input, .gemini-ocr-modal textarea, .gemini-ocr-modal select { width: 100%; padding: 8px; box-sizing: border-box; font-family: monospace; background-color: #2a2a2e; border: 1px solid #555; border-radius: 5px; color: #EAEAEA; } .gemini-ocr-modal button { padding: 10px 18px; border: none; border-radius: 5px; color: #1A1D21; cursor: pointer; font-weight: bold; } #gemini-ocr-server-status { padding: 10px; border-radius: 5px; text-align: center; cursor: pointer; transition: background-color 0.3s; } #gemini-ocr-server-status.status-ok { background-color: #27ae60; } #gemini-ocr-server-status.status-error { background-color: #c0392b; } #gemini-ocr-server-status.status-checking { background-color: #3498db; }
 
             /* ----------- RESPONSIVE ADJUSTMENTS (added) ----------- */
-            @media (max-width: 768px) {
-                .gemini-ocr-text-box {
-                    min-width: 30px;
-                    min-height: 30px;
-                }
+@media (max-width: 768px) {
+    .gemini-ocr-text-box {
+        min-width: 30px;
+        min-height: 30px;
+        font-size: 14px !important; /* Enforce minimum on mobile */
+    }
+}
 
                 #gemini-ocr-global-anki-export-btn,
                 #gemini-ocr-settings-button {
@@ -1873,18 +1957,18 @@ function displayOcrResults(targetImg) {
                 transition: none !important;
                 animation: none !important;
             }
-            .mobile-mode .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            .mobile-mode .interaction-mode-click.is-focused .manual-highlight {
-                transform: scale(1) !important;
-                transition: none !important;
-            }
+.mobile-mode .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+.mobile-mode .interaction-mode-click.is-focused .manual-highlight {
+    transform: scale(var(--ocr-focus-scale, 1.1)) !important; /* Keep the scale */
+    transition: none !important; /* Only remove transition */
+}
         `);
 
         document.body.insertAdjacentHTML('beforeend', `
             <button id="gemini-ocr-global-anki-export-btn" title="Export Screenshot to Anki">➕</button>
             <button id="gemini-ocr-settings-button">⚙️</button>
             <div id="gemini-ocr-settings-modal" class="gemini-ocr-modal is-hidden">
-                <div class="gemini-ocr-modal-header"><h2>Mangatan Settings (PC Version)</h2></div>
+                <div class="gemini-ocr-modal-header"><h2>Mangatan Settings</h2></div>
                 <div class="gemini-ocr-modal-content">
                     <h3>OCR & Image Source</h3>
                     <div class="gemini-ocr-settings-grid full-width">
@@ -2281,7 +2365,6 @@ function displayOcrResults(targetImg) {
         logDebug("Initializing HYBRID engine with Focus Color (BlendMode). Hover Stability Patches Applied. Font Size Calculation Fix Applied. Site Matching Debug Included. OCR Error Resilience Added. Editable Text Boxes Enabled. Image Export Fix Applied. Blank Alt Attributes & Hide Numbered Container & Duplicate Punctuation Remover Enabled. Merge Selection Stability Fixed. Multi-Image Selector Added.");
 
         setupBlankAltObservers();
-        setupPunctuationRemover();
 
         resizeObserver = new ResizeObserver(handleResize);
         intersectionObserver = new IntersectionObserver(handleIntersection, { rootMargin: '100px 0px' });
