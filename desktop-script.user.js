@@ -265,6 +265,37 @@ function setupBlankAltObservers() {
         logDebug(`Robust navigation observer attached to ${targetNode.id || targetNode.className}.`);
     }
 
+// NEW: Detect page turns by monitoring image sources
+function setupPageChangeDetection() {
+    let lastVisibleImageSrcs = new Set();
+
+    setInterval(() => {
+        const currentVisibleImageSrcs = new Set();
+
+        // Collect currently visible image sources
+        for (const img of visibleImages) {
+            if (img.isConnected && img.src) {
+                currentVisibleImageSrcs.add(img.src);
+            }
+        }
+
+        // If images completely changed, it's a page turn
+        if (lastVisibleImageSrcs.size > 0 && currentVisibleImageSrcs.size > 0) {
+            const hasOverlap = [...currentVisibleImageSrcs].some(src =>
+                lastVisibleImageSrcs.has(src)
+            );
+
+            if (!hasOverlap) {
+                logDebug("Page turn detected - clearing recent images");
+                recentlyHoveredImages.clear();
+                activeImageForExport = null;
+            }
+        }
+
+        lastVisibleImageSrcs = currentVisibleImageSrcs;
+    }, 2000);
+}
+
     // --- Hybrid Render Engine Core ---
     function updateVisibleOverlaysPosition() {
         for (const img of visibleImages) {
@@ -2073,150 +2104,171 @@ function applyTheme() {
 
         UI.settingsButton.addEventListener('click', () => UI.settingsModal.classList.toggle('is-hidden'));
 
-        // MULTI‑IMAGE SELECTOR: Updated Anki button handler
-        UI.globalAnkiButton.addEventListener('click', async () => {
-            let targetImage = activeImageForExport;
+// ENHANCED: Get valid images with fallback to visible images
+function getValidImagesForExport() {
+    const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+    const validImages = [];
 
-            console.log('[ANKI EXPORT DEBUG] Starting export...');
-            console.log('[ANKI EXPORT DEBUG] activeImageForExport:', targetImage ? targetImage.src : 'null');
-            console.log('[ANKI EXPORT DEBUG] Current URL:', window.location.href);
-            console.log('[ANKI EXPORT DEBUG] managedElements size:', managedElements.size);
-            console.log('[ANKI EXPORT DEBUG] recentlyHoveredImages size:', recentlyHoveredImages.size);
+    // First, check recently hovered images
+    for (const img of recentlyHoveredImages) {
+        const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
+        const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
+                                     currentChapterMatch[0] === imageChapterMatch[0];
 
-            // Get current chapter for filtering
-            const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+        if (img.isConnected &&
+            managedElements.has(img) &&
+            img.naturalHeight > 0 &&
+            isFromCurrentChapter) {
 
-            // NEW: Build list of valid candidate images from recently hovered
-            const validRecentImages = [];
-            for (const img of recentlyHoveredImages) {
-                const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
-                const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+            const rect = img.getBoundingClientRect();
+            const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
 
-                if (img.isConnected &&
-                    managedElements.has(img) &&
-                    img.naturalHeight > 0 &&
-                    isFromCurrentChapter) {
+            validImages.push({
+                image: img,
+                rect: rect,
+                isInViewport: isInViewport,
+                pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
+            });
+        }
+    }
 
-                    const rect = img.getBoundingClientRect();
-                    const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+    // If we have less than 2 valid images, supplement with visible images
+    if (validImages.length < 2) {
+        logDebug(`Only ${validImages.length} recent images, supplementing with visible images`);
 
-                    validRecentImages.push({
+        const existingImageElements = new Set(validImages.map(item => item.image));
+
+        for (const img of visibleImages) {
+            // Skip if already in the list
+            if (existingImageElements.has(img)) continue;
+
+            const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
+            const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
+                                         currentChapterMatch[0] === imageChapterMatch[0];
+
+            if (img.isConnected &&
+                managedElements.has(img) &&
+                img.naturalHeight > 0 &&
+                isFromCurrentChapter) {
+
+                const rect = img.getBoundingClientRect();
+                const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+
+                if (isInViewport) {
+                    validImages.push({
                         image: img,
                         rect: rect,
                         isInViewport: isInViewport,
                         pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
                     });
+
+                    existingImageElements.add(img);
                 }
             }
+        }
+    }
 
-            // Sort by page number
-            validRecentImages.sort((a, b) => a.pageNumber - b.pageNumber);
-            console.log('[ANKI EXPORT DEBUG] Valid recent images:', validRecentImages.length);
+    // Sort by page number
+    validImages.sort((a, b) => a.pageNumber - b.pageNumber);
 
-            // If we have multiple valid images, show a selection UI
-            if (validRecentImages.length > 1) {
-                targetImage = await showImageSelectionDialog(validRecentImages);
-                if (!targetImage) {
-                    // User cancelled
-                    return;
-                }
-            } else if (validRecentImages.length === 1) {
-                targetImage = validRecentImages[0].image;
-            }
+    return validImages;
+}
 
-            // Validate the image
-            if (targetImage) {
-                const imageChapterMatch = targetImage.src.match(/\/manga\/\d+\/chapter\/\d+/);
-                const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+        // MULTI‑IMAGE SELECTOR: Updated Anki button handler
+UI.globalAnkiButton.addEventListener('click', async () => {
+    let targetImage = activeImageForExport;
 
-                const isValid = (
-                    targetImage.isConnected &&
-                    managedElements.has(targetImage) &&
-                    targetImage.offsetParent !== null &&
-                    targetImage.naturalHeight > 0 &&
-                    isFromCurrentChapter
-                );
+    console.log('[ANKI EXPORT DEBUG] Starting export...');
+    console.log('[ANKI EXPORT DEBUG] activeImageForExport:', targetImage ? targetImage.src : 'null');
+    console.log('[ANKI EXPORT DEBUG] Current URL:', window.location.href);
+    console.log('[ANKI EXPORT DEBUG] managedElements size:', managedElements.size);
+    console.log('[ANKI EXPORT DEBUG] recentlyHoveredImages size:', recentlyHoveredImages.size);
+    console.log('[ANKI EXPORT DEBUG] visibleImages size:', visibleImages.size);
 
-                console.log('[ANKI EXPORT DEBUG] Image validation:', {
-                    isConnected: targetImage.isConnected,
-                    hasInManagedElements: managedElements.has(targetImage),
-                    offsetParent: targetImage.offsetParent !== null,
-                    naturalHeight: targetImage.naturalHeight,
-                    isFromCurrentChapter: isFromCurrentChapter,
-                    isValid: isValid
-                });
+    // NEW: Use enhanced function that falls back to visible images
+    const validRecentImages = getValidImagesForExport();
 
-                if (!isValid) {
-                    console.log('[ANKI EXPORT DEBUG] Image is stale/invalid or from wrong chapter!');
-                    logDebug("Active image reference is invalid/stale. Searching for visible image.");
-                    targetImage = null;
-                    activeImageForExport = null;
-                }
-            }
+    console.log('[ANKI EXPORT DEBUG] Valid images for export:', validRecentImages.length);
 
-            // Fallback: search for visible images
-            if (!targetImage) {
-                console.log('[ANKI EXPORT DEBUG] Searching for visible images...');
-                logDebug("No active image, searching for visible images...");
+    // If we have multiple valid images, show a selection UI
+    if (validRecentImages.length > 1) {
+        targetImage = await showImageSelectionDialog(validRecentImages);
+        if (!targetImage) {
+            // User cancelled
+            return;
+        }
+    } else if (validRecentImages.length === 1) {
+        targetImage = validRecentImages[0].image;
+    }
 
-                for (const [img, state] of managedElements.entries()) {
-                    if (!img.isConnected) continue;
+    // Get current chapter for validation
+    const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
 
-                    const rect = img.getBoundingClientRect();
-                    const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+    // Validate the image
+    if (targetImage) {
+        const imageChapterMatch = targetImage.src.match(/\/manga\/\d+\/chapter\/\d+/);
+        const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
 
-                    const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
-                    const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+        const isValid = (
+            targetImage.isConnected &&
+            managedElements.has(targetImage) &&
+            targetImage.offsetParent !== null &&
+            targetImage.naturalHeight > 0 &&
+            isFromCurrentChapter
+        );
 
-                    if (img.isConnected &&
-                        img.offsetParent !== null &&
-                        img.naturalHeight > 0 &&
-                        state.overlay?.isConnected &&
-                        isInViewport &&
-                        isFromCurrentChapter) {
-                        targetImage = img;
-                        console.log('[ANKI EXPORT DEBUG] Selected image:', img.src.slice(-50));
-                        logDebug(`Found visible image: ${img.src.slice(-50)}`);
-                        break;
-                    }
-                }
-            }
-
-            if (targetImage) {
-                console.log('[ANKI EXPORT DEBUG] Final selected image:', targetImage.src);
-                logDebug(`Using image for Anki export: ${targetImage.src.slice(-50)}`);
-                const btn = UI.globalAnkiButton;
-
-                try {
-                    btn.textContent = '⏳';
-                    btn.disabled = true;
-
-                    const success = await exportImageToAnki(targetImage);
-
-                    btn.textContent = success ? '✓' : '✖';
-                    btn.style.backgroundColor = success ? '#27ae60' : '#c0392b';
-
-                    if (!success) {
-                        logDebug("Anki export failed or was cancelled");
-                    }
-                } catch (error) {
-                    console.error('[ANKI EXPORT DEBUG] Unexpected error:', error);
-                    btn.textContent = '❌';
-                    btn.style.backgroundColor = '#c0392b';
-                    logDebug(`Unexpected error during Anki export: ${error.message}`);
-                } finally {
-                    setTimeout(() => {
-                        btn.textContent = '➕';
-                        btn.style.backgroundColor = '';
-                        btn.disabled = false;
-                    }, 2000);
-                }
-            } else {
-                console.log('[ANKI EXPORT DEBUG] NO VALID IMAGE FOUND!');
-                alert("No images available for export. Please wait for images to load.");
-                logDebug("EXPORT FAILED: No valid images found in managedElements");
-            }
+        console.log('[ANKI EXPORT DEBUG] Image validation:', {
+            isConnected: targetImage.isConnected,
+            hasInManagedElements: managedElements.has(targetImage),
+            offsetParent: targetImage.offsetParent !== null,
+            naturalHeight: targetImage.naturalHeight,
+            isFromCurrentChapter: isFromCurrentChapter,
+            isValid: isValid
         });
+
+        if (!isValid) {
+            console.log('[ANKI EXPORT DEBUG] Image is stale/invalid or from wrong chapter!');
+            logDebug("Active image reference is invalid/stale.");
+            targetImage = null;
+            activeImageForExport = null;
+        }
+    }
+
+    if (targetImage) {
+        console.log('[ANKI EXPORT DEBUG] Final selected image:', targetImage.src);
+        logDebug(`Using image for Anki export: ${targetImage.src.slice(-50)}`);
+        const btn = UI.globalAnkiButton;
+
+        try {
+            btn.textContent = '⏳';
+            btn.disabled = true;
+
+            const success = await exportImageToAnki(targetImage);
+
+            btn.textContent = success ? '✓' : '✖';
+            btn.style.backgroundColor = success ? '#27ae60' : '#c0392b';
+
+            if (!success) {
+                logDebug("Anki export failed or was cancelled");
+            }
+        } catch (error) {
+            console.error('[ANKI EXPORT DEBUG] Unexpected error:', error);
+            btn.textContent = '❌';
+            btn.style.backgroundColor = '#c0392b';
+            logDebug(`Unexpected error during Anki export: ${error.message}`);
+        } finally {
+            setTimeout(() => {
+                btn.textContent = '➕';
+                btn.style.backgroundColor = '';
+                btn.disabled = false;
+            }, 2000);
+        }
+    } else {
+        console.log('[ANKI EXPORT DEBUG] NO VALID IMAGE FOUND!');
+        alert("No images available for export. Please wait for images to load.");
+        logDebug("EXPORT FAILED: No valid images found");
+    }
+});
 
         UI.globalAnkiButton.addEventListener('mouseenter', () => {
             const state = activeImageForExport ? managedElements.get(activeImageForExport) : null;
@@ -2396,8 +2448,9 @@ function applyTheme() {
         UI.mobileModeCheckbox.checked = settings.mobileMode;
         document.body.classList.toggle('mobile-mode', settings.mobileMode);
 
-        reinitializeScript();
-        setupNavigationObserver();
+reinitializeScript();
+setupNavigationObserver();
+setupPageChangeDetection(); // ADD THIS LINE
 
         setInterval(() => {
             cleanupDisconnectedImages();
