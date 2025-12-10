@@ -181,6 +181,7 @@ function setupBlankAltObservers() {
         text = text.replace(/[ ]*(\?!)+/g, '⁈');
         text = text.replace(/[ ]*\u2026+/g, '\u2026');
         text = text.replace(/[ ]*\u30FB\u30FB+/g, '\u2026');
+        text = text.replace(/[ ]*\uFF65\uFF65+/g, '\u2026');
 
         // Replace one or more hyphens with prolonged sound mark
         text = text.replace(/[ ]*-+/g, '\u30FC');
