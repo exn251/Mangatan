@@ -453,26 +453,33 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     if (!measurementSpan || !box || !imgRect || imgRect.width === 0 || imgRect.height === 0) return;
     const ocrData = box._ocrData, text = ocrData.text || '';
 
+    // --- STABILITY FIX: Reset box to original OCR dimensions before measuring ---
+    // This prevents the box from "drifting" or getting permanently stuck at a larger size
+    // after a resize event or if the Minimum Font logic previously expanded it.
+    box.style.width = `${ocrData.tightBoundingBox.width * 100}%`;
+    box.style.height = `${ocrData.tightBoundingBox.height * 100}%`;
+    box.style.left = `${ocrData.tightBoundingBox.left * 100}%`; // Ensure position is reset too if you use left/top
+    // Note: If your OCR data uses 'x' and 'y', use those:
+    box.style.left = `${ocrData.tightBoundingBox.x * 100}%`;
+    box.style.top = `${ocrData.tightBoundingBox.y * 100}%`;
+    // --------------------------------------------------------------------------
+
     // Use adjusted dimensions for fitting calculations with **100%** target usage
+    // We must read offsetWidth AFTER resetting the percentage styles above.
     const availableWidth = (box.offsetWidth + settings.boundingBoxAdjustment) * 1.00;
     const availableHeight = (box.offsetHeight + settings.boundingBoxAdjustment) * 1.00;
 
     if (!text || availableWidth <= 0 || availableHeight <= 0) return;
 
-    // --- NEW: MINIMUM FONT SIZE ENFORCEMENT WITH BOX ADJUSTMENT ---
-    const MINIMUM_FONT_SIZE = 24; // Your new minimum size
+    const MINIMUM_FONT_SIZE = 24;
 
     // Determine if this is a merged box (contains line breaks)
     const isMerged = ocrData.isMerged || text.includes('\u200B');
 
-    // --- REFINED LOGIC: Multi-line fitting with box adjustment for minimum font size ---
+    // ... [Keep your existing findBestFitSize and findBestFitSizeForMerged functions exactly as they are] ...
     const findBestFitSize = (isVerticalSearch) => {
-        // Set writing mode for measurement
         measurementSpan.style.writingMode = isVerticalSearch ? 'vertical-rl' : 'horizontal-tb';
-
-        // Use different whitespace handling for merged vs non‑merged text
         if (isMerged) {
-            // Preserve line breaks exactly
             measurementSpan.style.whiteSpace = 'pre';
             measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
         } else {
@@ -487,15 +494,10 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
             const mid = Math.floor((low + high) / 2);
             if (mid <= 0) break;
             measurementSpan.style.fontSize = `${mid}px`;
-
-            const measuredWidth = measurementSpan.offsetWidth;
-            const measuredHeight = measurementSpan.offsetHeight;
-
-            const fitsWidth = measuredWidth <= availableWidth;
-            const fitsHeight = measuredHeight <= availableHeight;
-            const fits = fitsWidth && fitsHeight;
-
-            if (fits) {
+            // Optimization: checking offset dimensions causes reflow.
+            // There is no way around this in vanilla JS without canvas,
+            // but the Caching logic in the parent function mitigates the cost.
+            if (measurementSpan.offsetWidth <= availableWidth && measurementSpan.offsetHeight <= availableHeight) {
                 bestSize = mid;
                 low = mid + 1;
             } else {
@@ -516,26 +518,20 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
             if (mid <= 0) break;
             measurementSpan.style.fontSize = `${mid}px`;
 
-            const measuredWidth = measurementSpan.offsetWidth;
-            const measuredHeight = measurementSpan.offsetHeight;
-
-            const fitsWidth = measuredWidth <= availableWidth;
-            const fitsHeight = measuredHeight <= availableHeight;
+            const mw = measurementSpan.offsetWidth;
+            const mh = measurementSpan.offsetHeight;
+            const fitsWidth = mw <= availableWidth;
+            const fitsHeight = mh <= availableHeight;
 
             let linesFit = true;
             if (fitsWidth && fitsHeight) {
                 const lineBreaks = text.split('\u200B').length;
-                const approxLineHeight = measuredHeight / Math.max(1, lineBreaks);
-                const approxCharsPerLine = Math.floor(text.length / Math.max(1, lineBreaks));
-                const approxLineWidth = measuredWidth / Math.max(1, approxCharsPerLine);
-                if (approxLineWidth * approxCharsPerLine > availableWidth * 1.1) {
+                if ((mw / Math.max(1, text.length / Math.max(1, lineBreaks))) * (text.length / Math.max(1, lineBreaks)) > availableWidth * 1.1) {
                     linesFit = false;
                 }
             }
 
-            const fits = fitsWidth && fitsHeight && linesFit;
-
-            if (fits) {
+            if (fitsWidth && fitsHeight && linesFit) {
                 bestSize = mid;
                 low = mid + 1;
             } else {
@@ -571,9 +567,7 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     const multiplier = isVertical ? settings.fontMultiplierVertical : settings.fontMultiplierHorizontal;
     const requiredFontSize = Math.max(finalFontSize, MINIMUM_FONT_SIZE);
 
-    // If we're enforcing a minimum that's larger than the optimal fit, adjust the box
     if (requiredFontSize > finalFontSize) {
-        // Measure the text at the required minimum size
         measurementSpan.style.fontSize = `${requiredFontSize * multiplier}px`;
         measurementSpan.style.writingMode = isVertical ? 'vertical-rl' : 'horizontal-tb';
         measurementSpan.style.whiteSpace = isMerged ? 'pre' : 'normal';
@@ -584,53 +578,40 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
             measurementSpan.textContent = text;
         }
 
-        const requiredWidth = measurementSpan.offsetWidth;
-        const requiredHeight = measurementSpan.offsetHeight;
+        // Adjust box dimensions (add 10% padding)
+        const scaledRequiredWidth = measurementSpan.offsetWidth * 1.1;
+        const scaledRequiredHeight = measurementSpan.offsetHeight * 1.1;
 
-        // Adjust box dimensions if needed (add 10% padding)
-        const scaleFactor = 1.1; // 10% padding
-        const scaledRequiredWidth = requiredWidth * scaleFactor;
-        const scaledRequiredHeight = requiredHeight * scaleFactor;
-
-        // Convert required dimensions to percentages of the image
-        const imgWidth = imgRect.width;
-        const imgHeight = imgRect.height;
-
-        if (imgWidth > 0 && imgHeight > 0) {
+        if (imgRect.width > 0 && imgRect.height > 0) {
+            // Get CURRENT percentages (which we reset at the top of the function)
             const currentWidthPercent = parseFloat(box.style.width);
             const currentHeightPercent = parseFloat(box.style.height);
 
-            const requiredWidthPercent = (scaledRequiredWidth / imgWidth) * 100;
-            const requiredHeightPercent = (scaledRequiredHeight / imgHeight) * 100;
+            const requiredWidthPercent = (scaledRequiredWidth / imgRect.width) * 100;
+            const requiredHeightPercent = (scaledRequiredHeight / imgRect.height) * 100;
 
-            // Only adjust if significantly larger than current box
             if (requiredWidthPercent > currentWidthPercent * 1.2 ||
                 requiredHeightPercent > currentHeightPercent * 1.2) {
 
-                // Adjust box position and size to center the text better
                 const newWidth = Math.max(currentWidthPercent, requiredWidthPercent);
                 const newHeight = Math.max(currentHeightPercent, requiredHeightPercent);
-
                 const widthAdjustment = (newWidth - currentWidthPercent) / 2;
                 const heightAdjustment = (newHeight - currentHeightPercent) / 2;
 
                 box.style.width = `${newWidth}%`;
                 box.style.height = `${newHeight}%`;
-                box.style.left = `${Math.max(0, parseFloat(box.style.left) - widthAdjustment)}%`;
-                box.style.top = `${Math.max(0, parseFloat(box.style.top) - heightAdjustment)}%`;
+                // Ensure we don't go negative or off screen logic could be added here
+                box.style.left = `${parseFloat(box.style.left) - widthAdjustment}%`;
+                box.style.top = `${parseFloat(box.style.top) - heightAdjustment}%`;
             }
         }
     }
 
-    // Apply the final font size
     box.style.fontSize = `${requiredFontSize * multiplier}px`;
-
-    // Apply the vertical class if necessary
     box.classList.toggle('gemini-ocr-text-vertical', isVertical);
 
-    // --- Apply styles for display ---
     if (isMerged) {
-        box.style.whiteSpace = 'pre';               // preserve line breaks exactly
+        box.style.whiteSpace = 'pre';
         box.style.textAlign = 'start';
         box.innerHTML = text.replace(/\u200B/g, "<br>");
     } else {
@@ -643,16 +624,37 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
 
 function calculateAndApplyOptimalStyles_Optimized(overlay, imgRect) {
     if (!measurementSpan || imgRect.width === 0 || imgRect.height === 0) return;
+
+    // --- OPTIMIZATION START: Cache Check ---
+    // Create a unique key based on the image dimensions
+    const dimensionKey = `${Math.round(imgRect.width)}x${Math.round(imgRect.height)}`;
+
+    // If we have already calculated for these exact dimensions, stop here.
+    // This eliminates the lag on repeat hovers.
+    if (overlay._lastCalcDimensions === dimensionKey && !overlay._forceRecalc) {
+        return;
+    }
+    // --- OPTIMIZATION END ---
+
     const boxes = Array.from(overlay.querySelectorAll('.gemini-ocr-text-box'));
     if (boxes.length === 0) return;
+
     const baseStyle = getComputedStyle(boxes[0]);
     Object.assign(measurementSpan.style, {
         fontFamily: baseStyle.fontFamily,
         fontWeight: baseStyle.fontWeight,
         letterSpacing: baseStyle.letterSpacing
     });
-    for (const box of boxes) calculateAndApplyStylesForSingleBox(box, imgRect);
+
+    for (const box of boxes) {
+        calculateAndApplyStylesForSingleBox(box, imgRect);
+    }
+
     measurementSpan.style.writingMode = 'horizontal-tb';
+
+    // Save the dimensions we just calculated for
+    overlay._lastCalcDimensions = dimensionKey;
+    overlay._forceRecalc = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -806,6 +808,9 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
         height: `${newOcrItem.tightBoundingBox.height * 100}%`
     });
     overlay.appendChild(newBoxElement);
+    // ADD THIS: Force recalculation next time, or calculate immediately
+    overlay._forceRecalc = true; // Invalidate cache
+    calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
     calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
 
     // Exit merging mode
@@ -1003,6 +1008,9 @@ function saveTextChanges(textBox, sourceImage, newText) {
         }
     }
 
+    // ADD THIS: Find the overlay to invalidate cache
+    const overlay = textBox.closest('.gemini-ocr-decoupled-overlay');
+    if (overlay) overlay._forceRecalc = true;
     // Re‑calculate styles for the updated text
     const imgRect = sourceImage.getBoundingClientRect();
     calculateAndApplyStylesForSingleBox(textBox, imgRect);
@@ -1882,7 +1890,7 @@ function applyTheme() {
     box-sizing: border-box;
     user-select: text;
     cursor: pointer;
-    transition: all 0.2s ease-in-out;
+    transition: opacity 0.2s, transform 0.1s;
     overflow: visible !important; /* Changed from hidden to visible */
     font-family: 'Noto Sans JP', sans-serif;
     font-weight: 600;
