@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining
 // @namespace    http://tampermonkey.net/
-// @version      24.5.28-PC-FocusColor-StableHover-OCRErrorResilience-Editable-ImageExportFix-AltBlank-PunctuationFix-MergeFix-MultiImageSelector
+// @version      24.5.29
 // @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes alt attribute blanking, numbered container hiding, and duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts.
 // @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Alt Blanking & Punctuation Fix & Merge Stability & Multi-Image Selector
 // @match        *://127.0.0.1*/*
