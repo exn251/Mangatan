@@ -171,20 +171,19 @@ For Android users, you'll need **Termux**.
     > ```sh
     > rm -rf ~/Mangatan && pkg install -y git nodejs && git clone https://github.com/kaihouguide/Mangatan && cd Mangatan/ocr-server-legacy && npm install express chrome-lens-ocr multer node-fetch --force && mkdir -p ~/bin && echo -e '#!/data/data/com.termux/files/usr/bin/sh\ncd ~/Mangatan/ocr-server-legacy && node server.js' > ~/bin/mangatan && chmod +x ~/bin/mangatan && echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
     
-      *   After the command above finishes, run these next commands **one-by-one** to finalize the installation.  
-        > ```
-npm install --cpu=wasm32 sharp --force
-        ```  
-        > ```
-npm install @img/sharp-wasm32 --force
-         ```  
-        > ```
-rm -rf node_modules package-lock.json
-         ```  
-        > ```
-npm install --force
-         ```
-
+      *   After the command above finishes, run these next commands **one-by-one** to finalize the installation.
+    > ```sh
+    > npm install --cpu=wasm32 sharp --force
+    > ```
+    > ```sh
+    > npm install @img/sharp-wasm32 --force
+    > ```
+    > ```sh
+    > rm -rf node_modules package-lock.json
+    > ```
+    > ```sh
+    > npm install --force
+    > ```
 After this, you can always start the Mangatan server by just typing `mangatan` in Termux.
 
 ### 💡 Usage
