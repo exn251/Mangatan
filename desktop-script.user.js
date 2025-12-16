@@ -65,7 +65,8 @@
         blue: { accent: '72,144,255', background: '229,243,255' }, red: { accent: '255,72,75', background: '255,229,230' },
         green: { accent: '34,119,49', background: '239,255,229' }, orange: { accent: '243,156,18', background: '255,245,229' },
         purple: { accent: '155,89,182', background: '245,229,255' }, turquoise: { accent: '26,188,156', background: '229,255,250' },
-        pink: { accent: '255,77,222', background: '255,229,255' }, grey: { accent: '149,165,166', background: '229,236,236' }
+        pink: { accent: '255,77,222', background: '255,229,255' }, grey: { accent: '149,165,166', background: '229,236,236' },
+        white: { accent: '70,70,70', background: '255,255,255' }
     };
 
     // --- Editable Text Box State ---
@@ -1876,7 +1877,6 @@ function applyTheme() {
     function createUI() {
         // Existing style block
         GM_addStyle(`
-            html.ocr-scroll-fix-active { overflow: hidden !important; } html.ocr-scroll-fix-active body { overflow-y: auto !important; overflow-x: hidden !important; }
             .gemini-ocr-decoupled-overlay { position: fixed; z-index: 9998; pointer-events: none; opacity: 0; display: none; }
             .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
             .gemini-ocr-decoupled-overlay.is-focused .gemini-ocr-text-box { pointer-events: auto; }
@@ -2475,11 +2475,6 @@ setupPageChangeDetection(); // ADD THIS LINE
                 }
             }
         }, 5000);
-
-        setInterval(() => {
-            const shouldBe = window.location.href.includes('/manga/');
-            document.documentElement.classList.toggle('ocr-scroll-fix-active', shouldBe);
-        }, 500);
     }
 
     init().catch(e => console.error(`[OCR Hybrid] Fatal Initialization Error: ${e.message}`));
