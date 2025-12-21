@@ -33,6 +33,10 @@ Disclaimer: All code is AI generated and this was done for personal use so don't
 
 Original readme below:
 
+### To make it easier to use this project we stared maintaing our own Language-learning Focused [suwayomi-fork](https://github.com/KolbyML/Mangatan) 
+### have a suggetion or want to have a chat? Join [mangatan's discord server](https://discord.gg/tDAtpPN8KK)
+
+
 ## Please add \n to nothing in your yomitan replacement patterns under Translation for now
 Welcome! This guide provides the steps to get your OCR server running for a seamless reading experience.
 
@@ -192,7 +196,7 @@ For Android users, you'll need **Termux**.
 2.  **Set up Suwayomi-Server in Termux:**
     *   Open a Termux session and run the following command to install and configure Suwayomi-Server. This sets up a simple `suwayomi` command for you to use.
     > ```sh
-    > pkg update -y && pkg install -y openjdk-21 wget jq && mkdir -p ~/suwayomi/bin && LATEST_JAR_URL=$(curl -s https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url') && wget -O ~/suwayomi/SuwayomiServer.jar "$LATEST_JAR_URL" && echo -e '#!/data/data/com.termux/files/usr/bin/bash\njava -jar ~/suwayomi/SuwayomiServer.jar' > ~/suwayomi/bin/suwayomi && chmod +x ~/suwayomi/bin/suwayomi && echo 'export PATH="$HOME/suwayomi/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
+    > pkg update -y && pkg install -y openjdk-21 wget jq libandroid-posix-semaphore && mkdir -p ~/suwayomi/bin && LATEST_JAR_URL=$(curl -s https://api.github.com/repos/Suwayomi/Suwayomi-Server/releases/latest | jq -r '.assets[] | select(.name | endswith(".jar")) | .browser_download_url') && wget -O ~/suwayomi/SuwayomiServer.jar "$LATEST_JAR_URL" && echo -e '#!/data/data/com.termux/files/usr/bin/bash\njava -jar ~/suwayomi/SuwayomiServer.jar' > ~/suwayomi/bin/suwayomi && chmod +x ~/suwayomi/bin/suwayomi && echo 'export PATH="$HOME/suwayomi/bin:$PATH"' >> ~/.bashrc && source ~/.bashrc
     > ```
     *   From now on, you can always run Suwayomi by just typing `suwayomi` in Termux.
 
@@ -203,20 +207,19 @@ For Android users, you'll need **Termux**.
     > rm -rf ~/Mangatan && pkg install -y git nodejs && git clone https://github.com/kaihouguide/Mangatan && cd Mangatan/ocr-server-legacy && npm install express chrome-lens-ocr multer node-fetch --force && mkdir -p ~/bin && echo -e '#!/data/data/com.termux/files/usr/bin/sh\ncd ~/Mangatan/ocr-server-legacy && node server.js' > ~/bin/mangatan && chmod +x ~/bin/mangatan && echo 'export PATH=$HOME/bin:$PATH' >> ~/.bashrc && source ~/.bashrc
     
       *   After the command above finishes, run these next commands **one-by-one** to finalize the installation.
-        > ```sh
-        > npm install --cpu=wasm32 sharp --force
-        > ```
-        > ```sh
-        > npm install @img/sharp-wasm32 --force
-        > ```
-        > ```sh
-        > rm -rf node_modules package-lock.json
-        > ```
-        > ```sh
-        > npm install --force
-        > ```
-
-    > After this, you can always start the Mangatan server by just typing `mangatan` in Termux.
+    > ```sh
+    > npm install --cpu=wasm32 sharp --force
+    > ```
+    > ```sh
+    > npm install @img/sharp-wasm32 --force
+    > ```
+    > ```sh
+    > rm -rf node_modules package-lock.json
+    > ```
+    > ```sh
+    > npm install --force
+    > ```
+After this, you can always start the Mangatan server by just typing `mangatan` in Termux.
 
 ### 💡 Usage
 *   Open Termux and write `suwayomi`, swipe from left to right to open a new session*, and write `mangatan`. Then go to `127.0.0.1:4567` and start reading. *If you have swipe gestures, swipe from bottom left, upwards.
@@ -287,7 +290,6 @@ This section provides an alternative setup method for users who prefer to run th
 #### Notes
 
 * You will have to go into tampermonkey and change each value of 127.0.0.1 to your host IP, this will have to be repeated every time you update your script! 
-
 
 
 
