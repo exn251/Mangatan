@@ -1,4 +1,4 @@
-// server.js - V5.2 With Sharp Instance Cloning Fix for Chunking
+// server.js - V5.3 With Image Preprocessing (Upscale + Binarize)
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
@@ -6,8 +6,6 @@ import path from 'node:path';
 import multer from 'multer';
 import fetch from 'node-fetch';
 import { program } from 'commander';
-// To enable tall image chunking, you must install the 'sharp' library:
-// npm install sharp
 import sharp from 'sharp';
 
 const app = express();
@@ -17,12 +15,18 @@ program
     .option('--ip <string>', 'Specify the server IP address to bind to', '127.0.0.1')
     .option('--port <number>', 'Specify the server port to listen on', 3000)
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
+    .option('--no-preprocess', 'Disable image preprocessing (upscaling and binarization)')
+    .option('--target-height <number>', 'Target height for upscaling (default: 4000)', 4000)
+    .option('--threshold <number>', 'Binarization threshold 0-255 (default: 150)', 150)
     .parse(process.argv);
 
 const options = program.opts();
 const host = options.ip;
 const port = options.port;
 const customCachePath = path.resolve(options.cachePath);
+const enablePreprocessing = options.preprocess !== false;
+const targetHeight = parseInt(options.targetHeight);
+const binarizeThreshold = parseInt(options.threshold);
 
 const lens = new LensCore();
 const CACHE_FILE_PATH = path.join(customCachePath, 'ocr-cache.json');
@@ -31,7 +35,7 @@ let ocrCache = new Map();
 let ocrRequestsProcessed = 0;
 let activeJobCount = 0;
 
-// --- Auto-Merge Configuration (Synced with Python Server) ---
+// --- Auto-Merge Configuration ---
 const AUTO_MERGE_CONFIG = {
     enabled: true,
     dist_k: 1.2,
@@ -44,7 +48,58 @@ const AUTO_MERGE_CONFIG = {
     add_space_on_merge: false,
 };
 
-// --- Auto-Merge Logic (Ported & Upgraded from Python Server) ---
+// --- Image Preprocessing Functions ---
+
+/**
+ * Preprocesses an image for better OCR results
+ * @param {Buffer} imageBuffer - Original image buffer
+ * @param {number} targetHeight - Target height for upscaling
+ * @param {number} threshold - Binarization threshold (0-255)
+ * @returns {Promise<{buffer: Buffer, width: number, height: number}>}
+ */
+async function preprocessImage(imageBuffer, targetHeight, threshold) {
+    const image = sharp(imageBuffer);
+    const metadata = await image.metadata();
+    
+    let processedImage = image;
+    let finalWidth = metadata.width;
+    let finalHeight = metadata.height;
+    
+    // Step 1: Upscale if image height is less than target
+    if (metadata.height < targetHeight) {
+        const scaleFactor = targetHeight / metadata.height;
+        finalWidth = Math.round(metadata.width * scaleFactor);
+        finalHeight = targetHeight;
+        
+        console.log(`[Preprocess] Upscaling from ${metadata.width}x${metadata.height} to ${finalWidth}x${finalHeight}`);
+        
+        processedImage = processedImage.resize(finalWidth, finalHeight, {
+            kernel: 'lanczos3',
+            fit: 'fill'
+        });
+    }
+    
+    // Step 2: Save as WebP with quality 75 for size reduction
+    console.log(`[Preprocess] Converting to WebP (quality: 75) for size reduction`);
+    const webpBuffer = await processedImage.webp({ quality: 75 }).toBuffer();
+    
+    // Step 3: Reload the WebP image and apply binarization
+    console.log(`[Preprocess] Applying binarization with threshold ${threshold}`);
+    processedImage = sharp(webpBuffer)
+        .greyscale()
+        .normalise() // Normalize contrast first for better results
+        .threshold(threshold);
+    
+    const buffer = await processedImage.toBuffer();
+    
+    return {
+        buffer,
+        width: finalWidth,
+        height: finalHeight
+    };
+}
+
+// --- Auto-Merge Logic ---
 
 class UnionFind {
     constructor(size) {
@@ -222,13 +277,13 @@ function autoMergeOcrData(lines, naturalWidth, naturalHeight, config) {
             if (isVerticalGroup) {
                 const centerXA = boxA.x + boxA.width / 2;
                 const centerXB = boxB.x + boxB.width / 2;
-                if (centerXA !== centerXB) return centerXB - centerXA; // Right-to-left
-                return (boxA.y + boxA.height / 2) - (boxB.y + boxB.height / 2); // Top-to-bottom
+                if (centerXA !== centerXB) return centerXB - centerXA;
+                return (boxA.y + boxA.height / 2) - (boxB.y + boxB.height / 2);
             } else {
                 const centerYA = boxA.y + boxA.height / 2;
                 const centerYB = boxB.y + boxB.height / 2;
-                if (centerYA !== centerYB) return centerYA - centerYB; // Top-to-bottom
-                return (boxA.x + boxA.width / 2) - (boxB.x + boxB.width / 2); // Left-to-right
+                if (centerYA !== centerYB) return centerYA - centerYB;
+                return (boxA.x + boxA.width / 2) - (boxB.x + boxB.width / 2);
             }
         });
 
@@ -253,7 +308,6 @@ function autoMergeOcrData(lines, naturalWidth, naturalHeight, config) {
     }
     return finalMergedData;
 }
-
 
 // --- Utility Functions ---
 
@@ -288,8 +342,10 @@ function transformOcrData(lensResult) {
     return lensResult.segments.map(({ text, boundingBox }) => ({
         text: text,
         tightBoundingBox: {
-            x: boundingBox.centerPerX - (boundingBox.perWidth / 2), y: boundingBox.centerPerY - (boundingBox.perHeight / 2),
-            width: boundingBox.perWidth, height: boundingBox.perHeight,
+            x: boundingBox.centerPerX - (boundingBox.perWidth / 2), 
+            y: boundingBox.centerPerY - (boundingBox.perHeight / 2),
+            width: boundingBox.perWidth, 
+            height: boundingBox.perHeight,
         }
     }));
 }
@@ -353,8 +409,18 @@ app.use((req, res, next) => {
 
 app.get('/', (req, res) => {
     res.json({
-        status: 'running', message: 'Local OCR server is active.', requests_processed: ocrRequestsProcessed,
-        items_in_cache: ocrCache.size, active_preprocess_jobs: activeJobCount, server_host: host, server_port: port
+        status: 'running', 
+        message: 'Local OCR server is active.', 
+        requests_processed: ocrRequestsProcessed,
+        items_in_cache: ocrCache.size, 
+        active_preprocess_jobs: activeJobCount, 
+        server_host: host, 
+        server_port: port,
+        preprocessing_enabled: enablePreprocessing,
+        preprocessing_config: enablePreprocessing ? {
+            target_height: targetHeight,
+            binarize_threshold: binarizeThreshold
+        } : null
     });
 });
 
@@ -379,18 +445,30 @@ app.get('/ocr', async (req, res) => {
 
         const response = await fetch(imageUrl, fetchOptions);
         if (!response.ok) throw new Error(`Failed to download image. Status: ${response.status} ${response.statusText}`);
-        const imageBuffer = Buffer.from(await response.arrayBuffer());
+        let imageBuffer = Buffer.from(await response.arrayBuffer());
 
-        const image = sharp(imageBuffer);
-        const metadata = await image.metadata();
-        const fullWidth = metadata.width;
-        const fullHeight = metadata.height;
+        // Apply preprocessing if enabled
+        let fullWidth, fullHeight;
+        if (enablePreprocessing) {
+            console.log(`[OCR] [${context}] Applying preprocessing...`);
+            const preprocessed = await preprocessImage(imageBuffer, targetHeight, binarizeThreshold);
+            imageBuffer = preprocessed.buffer;
+            fullWidth = preprocessed.width;
+            fullHeight = preprocessed.height;
+        } else {
+            const image = sharp(imageBuffer);
+            const metadata = await image.metadata();
+            fullWidth = metadata.width;
+            fullHeight = metadata.height;
+        }
 
         let allFinalResults = [];
-        const MAX_CHUNK_HEIGHT = 3000;
+        const MAX_CHUNK_HEIGHT = 4000;
 
         if (fullHeight > MAX_CHUNK_HEIGHT) {
             console.log(`[OCR] [${context}] Image is tall (${fullHeight}px). Processing in chunks.`);
+            const image = sharp(imageBuffer);
+            
             for (let yOffset = 0; yOffset < fullHeight; yOffset += MAX_CHUNK_HEIGHT) {
                 const currentTop = Math.round(yOffset);
                 if (currentTop >= fullHeight) continue;
@@ -401,12 +479,14 @@ app.get('/ocr', async (req, res) => {
                 }
                 if (chunkHeight <= 0) continue;
 
-                // --- THE FIX: Clone the sharp instance before each extraction ---
-                // This prevents the "instance consumed" error on subsequent loop iterations.
-                const chunkBuffer = await image.clone().extract({ left: 0, top: currentTop, width: fullWidth, height: chunkHeight }).toBuffer();
+                const chunkBuffer = await image.clone().extract({ 
+                    left: 0, 
+                    top: currentTop, 
+                    width: fullWidth, 
+                    height: chunkHeight 
+                }).toBuffer();
                 
-                const mimeType = metadata.format === 'jpeg' ? 'image/jpeg' : 'image/png';
-                const dataUrl = `data:${mimeType};base64,${chunkBuffer.toString('base64')}`;
+                const dataUrl = `data:image/png;base64,${chunkBuffer.toString('base64')}`;
 
                 console.log(`[OCR] [${context}] Processing chunk at y=${currentTop} (size: ${fullWidth}x${chunkHeight})`);
                 const rawChunkResults = transformOcrData(await lens.scanByURL(dataUrl));
@@ -425,8 +505,7 @@ app.get('/ocr', async (req, res) => {
                 });
             }
         } else {
-            const mimeType = metadata.format === 'jpeg' ? 'image/jpeg' : 'image/png';
-            const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
+            const dataUrl = `data:image/png;base64,${imageBuffer.toString('base64')}`;
             const rawResults = transformOcrData(await lens.scanByURL(dataUrl));
             allFinalResults = rawResults;
             if (AUTO_MERGE_CONFIG.enabled && rawResults.length > 0) {
@@ -446,7 +525,6 @@ app.get('/ocr', async (req, res) => {
         res.status(500).json({ error: `OCR process failed: ${error.message}` });
     }
 });
-
 
 app.post("/preprocess-chapter", (req, res) => {
     const { baseUrl, user, pass, context = "No Context" } = req.body;
@@ -501,8 +579,13 @@ app.listen(port, host, (err) => {
         console.error('Error starting server:', err);
     } else {
         loadCacheFromFile();
-        console.log(`Local OCR Server V5.2 listening at http://${host}:${port}`);
+        console.log(`Local OCR Server V5.3 listening at http://${host}:${port}`);
         console.log(`Cache file path: ${CACHE_FILE_PATH}`);
-        console.log('Features: Upgraded Auto-Merging, Tall Image Chunking (w/ Cloning Fix), Context Logging, Persistent Caching, Import/Export, Auth, Chapter Pre-processing');
+        console.log(`Preprocessing: ${enablePreprocessing ? 'ENABLED' : 'DISABLED'}`);
+        if (enablePreprocessing) {
+            console.log(`  - Target height: ${targetHeight}px (upscaling with Lanczos3)`);
+            console.log(`  - Binarization threshold: ${binarizeThreshold}`);
+        }
+        console.log('Features: Image Preprocessing, Auto-Merging, Tall Image Chunking, Context Logging, Persistent Caching, Import/Export, Auth, Chapter Pre-processing');
     }
 });
