@@ -65,9 +65,6 @@ async function preprocessImage(imageBuffer, targetHeight, threshold) {
     let finalHeight = metadata.height;
     
     // Step 1: Resize (Lanczos2 for speed/quality balance)
-    // If the image is already smaller than targetHeight, we keep it as is? 
-    // Usually for OCR we want to Standardize. If it's huge, we shrink it. If small, we upscale.
-    // The previous logic only Upscaled. Here we enforce height = 2000 to keep it fast.
     if (metadata.height !== targetHeight) {
         const scaleFactor = targetHeight / metadata.height;
         finalWidth = Math.round(metadata.width * scaleFactor);
@@ -418,6 +415,8 @@ app.get('/ocr', async (req, res) => {
         ocrRequestsProcessed++;
         ocrCache.set(imageUrl, { context, data: allFinalResults });
         saveCacheToFile();
+        
+        console.log(`[OCR] [${context}] Success! Saved ${allFinalResults.length} text segments to cache.`);
         res.json(allFinalResults);
 
     } catch (error) {
