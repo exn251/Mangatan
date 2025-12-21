@@ -1,4 +1,4 @@
-// server.js - V5.5 (WebP Q75 Compressed Output)
+// server.js - V5.6 Mobile Optimized (Height 2000, Threshold 170)
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
@@ -16,8 +16,9 @@ program
     .option('--port <number>', 'Specify the server port to listen on', 3000)
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
     .option('--no-preprocess', 'Disable image preprocessing (upscaling and binarization)')
-    .option('--target-height <number>', 'Target height for upscaling (default: 4000)', 4000)
-    .option('--threshold <number>', 'Binarization threshold 0-255 (default: 150)', 150)
+    // UPDATED DEFAULTS FOR MOBILE SPEED
+    .option('--target-height <number>', 'Target height for upscaling (default: 2000)', 2000)
+    .option('--threshold <number>', 'Binarization threshold 0-255 (default: 170)', 170)
     .parse(process.argv);
 
 const options = program.opts();
@@ -51,8 +52,10 @@ const AUTO_MERGE_CONFIG = {
 // --- Image Preprocessing Functions ---
 
 /**
- * Optimized Preprocessing:
- * Chains operations and outputs compressed WebP to minimize payload size.
+ * Optimized Preprocessing for Mobile:
+ * 1. Resizes to 2000px (fast/light).
+ * 2. Applies Threshold 170 (high contrast).
+ * 3. Compresses to WebP Q75 (tiny payload).
  */
 async function preprocessImage(imageBuffer, targetHeight, threshold) {
     let pipeline = sharp(imageBuffer);
@@ -61,8 +64,11 @@ async function preprocessImage(imageBuffer, targetHeight, threshold) {
     let finalWidth = metadata.width;
     let finalHeight = metadata.height;
     
-    // Step 1: Upscale (Lanczos2)
-    if (metadata.height < targetHeight) {
+    // Step 1: Resize (Lanczos2 for speed/quality balance)
+    // If the image is already smaller than targetHeight, we keep it as is? 
+    // Usually for OCR we want to Standardize. If it's huge, we shrink it. If small, we upscale.
+    // The previous logic only Upscaled. Here we enforce height = 2000 to keep it fast.
+    if (metadata.height !== targetHeight) {
         const scaleFactor = targetHeight / metadata.height;
         finalWidth = Math.round(metadata.width * scaleFactor);
         finalHeight = targetHeight;
@@ -74,14 +80,13 @@ async function preprocessImage(imageBuffer, targetHeight, threshold) {
     }
     
     // Step 2: Binarize -> Compress to WebP
-    // We apply WebP compression at the very end to ensure the buffer is small.
-    console.log(`[Preprocess] Upscale to ${finalHeight}px -> Threshold ${threshold} -> WebP (Q75)`);
+    console.log(`[Preprocess] Resize to ${finalHeight}px -> Threshold ${threshold} -> WebP (Q75)`);
     
     pipeline = pipeline
         .greyscale()
         .normalise()
         .threshold(threshold)
-        .webp({ quality: 75 }); // <--- EXPLICIT COMPRESSION HERE
+        .webp({ quality: 75 }); 
     
     const buffer = await pipeline.toBuffer();
     
@@ -92,7 +97,7 @@ async function preprocessImage(imageBuffer, targetHeight, threshold) {
     };
 }
 
-// --- Auto-Merge Logic (Unchanged) ---
+// --- Auto-Merge Logic (Standard) ---
 class UnionFind {
     constructor(size) {
         this.parent = Array.from({ length: size }, (_, i) => i);
@@ -343,7 +348,7 @@ app.get('/ocr', async (req, res) => {
 
         let fullWidth, fullHeight;
         if (enablePreprocessing) {
-            // Updated pipeline returns WebP buffer
+            // Updated pipeline returns WebP buffer (2000px height)
             const preprocessed = await preprocessImage(imageBuffer, targetHeight, binarizeThreshold);
             imageBuffer = preprocessed.buffer;
             fullWidth = preprocessed.width;
@@ -358,9 +363,11 @@ app.get('/ocr', async (req, res) => {
         let allFinalResults = [];
         const MAX_CHUNK_HEIGHT = 4000;
 
+        // Since we are now processing at Height=2000, this block effectively only runs
+        // if preprocessing is DISABLED or if the user manually overrides targetHeight to >4000
         if (fullHeight > MAX_CHUNK_HEIGHT) {
             console.log(`[OCR] [${context}] Tall image (${fullHeight}px). Chunking.`);
-            const image = sharp(imageBuffer); // sharp loads WebP buffer fine
+            const image = sharp(imageBuffer);
             
             for (let yOffset = 0; yOffset < fullHeight; yOffset += MAX_CHUNK_HEIGHT) {
                 const currentTop = Math.round(yOffset);
@@ -369,17 +376,15 @@ app.get('/ocr', async (req, res) => {
                 if (currentTop + chunkHeight > fullHeight) chunkHeight = fullHeight - currentTop;
                 if (chunkHeight <= 0) continue;
 
-                // IMPORTANT: Ensure chunks are also compressed to WebP Q75!
                 const chunkBuffer = await image.clone().extract({ 
                     left: 0, 
                     top: currentTop, 
                     width: fullWidth, 
                     height: chunkHeight 
                 })
-                .webp({ quality: 75 }) // <--- Compress chunk
+                .webp({ quality: 75 })
                 .toBuffer();
                 
-                // Header MUST match the format
                 const dataUrl = `data:image/webp;base64,${chunkBuffer.toString('base64')}`;
 
                 console.log(`[OCR] [${context}] Sending chunk y=${currentTop} (WebP)`);
@@ -399,7 +404,7 @@ app.get('/ocr', async (req, res) => {
                 });
             }
         } else {
-            // Header MUST match the format (imageBuffer is already WebP from preprocessImage)
+            // Fast Path: Image is <= 2000px (or whatever target is)
             const mimeType = enablePreprocessing ? 'image/webp' : 'image/png';
             const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
             
@@ -457,7 +462,7 @@ app.listen(port, host, (err) => {
     if (err) console.error('Error:', err);
     else {
         loadCacheFromFile();
-        console.log(`Local OCR Server V5.5 listening at http://${host}:${port}`);
+        console.log(`Local OCR Server V5.6 (Mobile Optimized) listening at http://${host}:${port}`);
         if (enablePreprocessing) console.log(`Preprocessing: WebP (Q75) Output @ Height ${targetHeight}px | Threshold ${binarizeThreshold}`);
     }
 });
