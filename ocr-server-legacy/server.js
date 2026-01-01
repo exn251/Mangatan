@@ -1,4 +1,4 @@
-// server.js - V5.6 Mobile Optimized (Height 2000, Threshold 170)
+// server.js - V5.7 Mobile Optimized (Width 1400, Threshold 170)
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
@@ -16,8 +16,8 @@ program
     .option('--port <number>', 'Specify the server port to listen on', 3000)
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
     .option('--no-preprocess', 'Disable image preprocessing (upscaling and binarization)')
-    // UPDATED DEFAULTS FOR MOBILE SPEED
-    .option('--target-height <number>', 'Target height for upscaling (default: 2000)', 2000)
+    // UPDATED: Changed from target-height to target-width
+    .option('--target-width <number>', 'Target width for upscaling (default: 1400)', 1400)
     .option('--threshold <number>', 'Binarization threshold 0-255 (default: 170)', 170)
     .parse(process.argv);
 
@@ -26,7 +26,8 @@ const host = options.ip;
 const port = options.port;
 const customCachePath = path.resolve(options.cachePath);
 const enablePreprocessing = options.preprocess !== false;
-const targetHeight = parseInt(options.targetHeight);
+// UPDATED: Use targetWidth
+const targetWidth = parseInt(options.targetWidth);
 const binarizeThreshold = parseInt(options.threshold);
 
 const lens = new LensCore();
@@ -53,22 +54,22 @@ const AUTO_MERGE_CONFIG = {
 
 /**
  * Optimized Preprocessing for Mobile:
- * 1. Resizes to 2000px (fast/light).
+ * 1. Resizes to 1400px WIDTH (fast/light).
  * 2. Applies Threshold 170 (high contrast).
  * 3. Compresses to WebP Q75 (tiny payload).
  */
-async function preprocessImage(imageBuffer, targetHeight, threshold) {
+async function preprocessImage(imageBuffer, targetWidth, threshold) {
     let pipeline = sharp(imageBuffer);
     const metadata = await pipeline.metadata();
     
     let finalWidth = metadata.width;
     let finalHeight = metadata.height;
     
-    // Step 1: Resize (Lanczos2 for speed/quality balance)
-    if (metadata.height !== targetHeight) {
-        const scaleFactor = targetHeight / metadata.height;
-        finalWidth = Math.round(metadata.width * scaleFactor);
-        finalHeight = targetHeight;
+    // Step 1: Resize based on Width (Lanczos2 for speed/quality balance)
+    if (metadata.width !== targetWidth) {
+        const scaleFactor = targetWidth / metadata.width;
+        finalWidth = targetWidth;
+        finalHeight = Math.round(metadata.height * scaleFactor);
         
         pipeline = pipeline.resize(finalWidth, finalHeight, {
             kernel: 'lanczos2',
@@ -77,7 +78,7 @@ async function preprocessImage(imageBuffer, targetHeight, threshold) {
     }
     
     // Step 2: Binarize -> Compress to WebP
-    console.log(`[Preprocess] Resize to ${finalHeight}px -> Threshold ${threshold} -> WebP (Q75)`);
+    console.log(`[Preprocess] Resize to ${finalWidth}px Width (${finalHeight}px Height) -> Threshold ${threshold} -> WebP (Q75)`);
     
     pipeline = pipeline
         .greyscale()
@@ -318,7 +319,7 @@ app.get('/', (req, res) => {
         requests_processed: ocrRequestsProcessed,
         items_in_cache: ocrCache.size, 
         active_preprocess_jobs: activeJobCount, 
-        preprocessing: { enabled: enablePreprocessing, height: targetHeight, format: 'WebP Q75' }
+        preprocessing: { enabled: enablePreprocessing, width: targetWidth, format: 'WebP Q75' }
     });
 });
 
@@ -345,8 +346,8 @@ app.get('/ocr', async (req, res) => {
 
         let fullWidth, fullHeight;
         if (enablePreprocessing) {
-            // Updated pipeline returns WebP buffer (2000px height)
-            const preprocessed = await preprocessImage(imageBuffer, targetHeight, binarizeThreshold);
+            // UPDATED: Pass targetWidth instead of height
+            const preprocessed = await preprocessImage(imageBuffer, targetWidth, binarizeThreshold);
             imageBuffer = preprocessed.buffer;
             fullWidth = preprocessed.width;
             fullHeight = preprocessed.height;
@@ -360,8 +361,8 @@ app.get('/ocr', async (req, res) => {
         let allFinalResults = [];
         const MAX_CHUNK_HEIGHT = 4000;
 
-        // Since we are now processing at Height=2000, this block effectively only runs
-        // if preprocessing is DISABLED or if the user manually overrides targetHeight to >4000
+        // Note: Even with Width resizing, if the resulting image is still extremely tall 
+        // (like a webtoon strip > 4000px height), this logic ensures it is chunked.
         if (fullHeight > MAX_CHUNK_HEIGHT) {
             console.log(`[OCR] [${context}] Tall image (${fullHeight}px). Chunking.`);
             const image = sharp(imageBuffer);
@@ -401,7 +402,7 @@ app.get('/ocr', async (req, res) => {
                 });
             }
         } else {
-            // Fast Path: Image is <= 2000px (or whatever target is)
+            // Standard path
             const mimeType = enablePreprocessing ? 'image/webp' : 'image/png';
             const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
             
@@ -461,7 +462,7 @@ app.listen(port, host, (err) => {
     if (err) console.error('Error:', err);
     else {
         loadCacheFromFile();
-        console.log(`Local OCR Server V5.6 (Mobile Optimized) listening at http://${host}:${port}`);
-        if (enablePreprocessing) console.log(`Preprocessing: WebP (Q75) Output @ Height ${targetHeight}px | Threshold ${binarizeThreshold}`);
+        console.log(`Local OCR Server V5.7 (Mobile Optimized) listening at http://${host}:${port}`);
+        if (enablePreprocessing) console.log(`Preprocessing: WebP (Q75) Output @ Width ${targetWidth}px | Threshold ${binarizeThreshold}`);
     }
 });
