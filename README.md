@@ -7,6 +7,13 @@ OCR:
     > ```
     > uv run server.py -e=meikimanga
     > ```
+*   Added Oneocr engine with image preprocessing to improve OCR results and furigana filter  
+-Resizes image to a width of 2500px -> Sharpen -> OCR -> Filter furigana  
+-Run this command in the `ocr-server` folder:  
+ 
+    > ```
+    > uv run server.py -e=oneocrfurigana
+    > ```
 Anki/Mining:
 *   Anki Export reworked (images should work on ankiconnect android)
 *   Added image picker for choosing which active image is being cropped for anki (useful for when multiple pages are active at once like in continuous horizontal and dual page)
