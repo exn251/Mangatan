@@ -5,6 +5,7 @@ from typing import TypedDict
 
 import chrome_lens_py
 from chrome_lens_py.utils.lens_betterproto import LensOverlayObjectsResponse
+import PIL.Image as PILImage 
 from PIL.Image import Image
 import cv2
 import numpy as np
@@ -143,6 +144,279 @@ class OneOCR(Engine):
 
         return output_json
 
+class OneOCRFurigana(Engine):
+    """
+    OCR engine wrapper that processes large images in overlapping chunks,
+    de‑duplicates results, and filters out furigana (small reading aids).
+    Includes comprehensive preprocessing to improve OCR accuracy.
+    """
+
+    def __init__(self):
+        try:
+            import oneocr
+            self.engine = oneocr.OcrEngine()
+        except ImportError as e:
+            print(f"[Warning] OneOCRFurigana import failed: {e}")
+        except Exception as e:
+            print(
+                f"[Warning] If you get this error please spam the Mangatan thread: {e}"
+            )
+        
+        # The height of each chunk to process.
+        self.CHUNK_HEIGHT = 4000
+        # The pixel overlap between chunks to prevent cutting text in half.
+        self.OVERLAP = 300
+        # Furigana filtering threshold
+        self.HORIZONTAL_FURIGANA_THRESHOLD = 0.70
+        # Furigana filter toggle
+        self.ENABLE_FURIGANAFILTER = True
+        
+        # Preprocessing toggles
+        self.ENABLE_PREPROCESSING = True
+        self.ENABLE_UPSCALING = True
+        self.TARGET_WIDTH = 2500  # Targeted width for upscaling
+        self.ENABLE_SHARPENING = True
+
+    # --------------------------------------------------------------------- #
+    # Enhanced Image preprocessing
+    # --------------------------------------------------------------------- #
+    def preprocess_image(self, img: Image) -> Image:
+        """
+        Enhanced preprocessing pipeline for manga OCR:
+        1. Upscale to target width (2500px) with Lanczos if smaller
+        2. Sharpen with unsharp mask
+        """
+        if not self.ENABLE_PREPROCESSING:
+            return img
+        
+        try:
+            from PIL import ImageFilter
+            
+            original_img = img
+            processed_img = img
+            
+            # Step 1: Upscale based on WIDTH
+            if self.ENABLE_UPSCALING:
+                original_width, original_height = processed_img.size
+                if original_width < self.TARGET_WIDTH:
+                    scale_factor = self.TARGET_WIDTH / original_width
+                    new_width = self.TARGET_WIDTH
+                    new_height = int(original_height * scale_factor)
+                    
+                    print(f"[Info] Upscaling image: {original_width}x{original_height} -> {new_width}x{new_height}")
+                    
+                    # FIXED: Use 'PILImage' (the module alias) for constants
+                    resample_filter = getattr(PILImage, 'Resampling', PILImage).LANCZOS
+                    processed_img = processed_img.resize(
+                        (new_width, new_height), 
+                        resample_filter
+                    )
+            
+            # Step 2: Sharpen with unsharp mask
+            if self.ENABLE_SHARPENING:
+                processed_img = processed_img.filter(
+                    ImageFilter.UnsharpMask(
+                        radius=1.0, 
+                        percent=100, 
+                        threshold=5
+                    )
+                )
+            
+            return processed_img
+            
+        except Exception as e:
+            print(f"[Warning] Preprocessing failed, using original image: {e}")
+            return original_img
+
+    # --------------------------------------------------------------------- #
+    # Chunk‑boundary helper
+    # --------------------------------------------------------------------- #
+    def is_near_chunk_boundary(
+        self, bbox: dict, chunk_height: int, y_offset: int, full_height: int
+    ) -> bool:
+        if y_offset == 0:
+            return False
+
+        abs_y = bbox["y"] * full_height
+        boundary_threshold = self.OVERLAP * 0.75
+        return abs_y < (y_offset + boundary_threshold)
+
+    # --------------------------------------------------------------------- #
+    # Public async entry point
+    # --------------------------------------------------------------------- #
+    async def ocr(self, img):
+        return self.process_image(img)
+        
+    # --------------------------------------------------------------------- #
+    # Furigana filtering
+    # --------------------------------------------------------------------- #
+    def filter_furigana(self, bubbles: list[Bubble], debug=False) -> list[Bubble]:
+        if not bubbles or not self.ENABLE_FURIGANAFILTER:
+            return bubbles
+
+        horiz = [b for b in bubbles if b["orientation"] == 0.0]
+        vert  = [b for b in bubbles if b["orientation"] == 90.0]
+
+        def filter_by_height(items):
+            if not items: return items
+            heights = sorted([item["tightBoundingBox"]["height"] for item in items])
+            median_h = heights[len(heights) // 2] if heights else 0
+            if median_h == 0: return items
+
+            filtered = []
+            for it in items:
+                h = it["tightBoundingBox"]["height"]
+                if h >= median_h * self.HORIZONTAL_FURIGANA_THRESHOLD:
+                    filtered.append(it)
+            return filtered
+
+        def filter_by_width(items):
+            if not items: return items
+
+            def _is_kana_only(text):
+                if not text.strip(): return False
+                letters = [ch for ch in text if ch.isalpha()]
+                if not letters: return False
+                return all(('\u3040' <= ch <= '\u309f') or ('\u30a0' <= ch <= '\u30ff') for ch in letters)
+
+            def _contains_kanji(text):
+                return any('\u4e00' <= ch <= '\u9fff' for ch in text)
+
+            def _has_dialogue_punctuation(text):
+                dialogue_marks = {'…', '。', '、', '！', '？', '!', '?', '~', '～', '‥', '・', '‼', '⁉', '⁈', '⁇', '—', '─', '―', '「', '」', '『', '』', '（', '）', '【', '】'}
+                return any(mark in text for mark in dialogue_marks)
+
+            kana_only_items = [it for it in items if _is_kana_only(it["text"])]
+            kanji_items = [it for it in items if _contains_kanji(it["text"])]
+            other_items = [it for it in items if it not in kana_only_items and it not in kanji_items]
+
+            if kanji_items and kana_only_items:
+                kanji_widths = sorted([it["tightBoundingBox"]["width"] for it in kanji_items])
+                median_kanji_w = kanji_widths[len(kanji_widths) // 2]
+                
+                # LOWERED: 0.81 -> 0.65 to accommodate thin Kana vs thick Kanji
+                furigana_threshold = median_kanji_w * 0.65
+
+                filtered_kana = []
+                for it in kana_only_items:
+                    w = it["tightBoundingBox"]["width"]
+                    text = it["text"]
+                    text_len = len(text.strip())
+
+                    if _has_dialogue_punctuation(text):
+                        filtered_kana.append(it)
+                        continue
+
+                    if text_len >= 6:
+                        # CHANGED: Long text is almost certainly dialogue. 
+                        # Use a very permissive threshold (50% of Kanji width) instead of the previous strict 90%.
+                        if w >= median_kanji_w * 0.50:
+                            filtered_kana.append(it)
+                        continue
+
+                    eff_threshold = furigana_threshold * (0.90 if text_len == 4 else 0.95 if text_len < 4 else 1.0)
+                    if w >= eff_threshold:
+                        filtered_kana.append(it)
+
+                return kanji_items + filtered_kana + other_items
+
+            widths = sorted([item["tightBoundingBox"]["width"] for item in items])
+            threshold = widths[len(widths) // 5] if len(widths) > 5 else (widths[len(widths)//2] * 0.40 if widths else 0)
+
+            filtered = []
+            for it in items:
+                if _has_dialogue_punctuation(it["text"]) or it["tightBoundingBox"]["width"] >= threshold:
+                    filtered.append(it)
+            return filtered
+
+        filtered_horiz = filter_by_height(horiz)
+        filtered_vert  = filter_by_width(vert)
+
+        filtered_set = {id(b) for b in filtered_horiz + filtered_vert}
+        return [b for b in bubbles if id(b) in filtered_set]
+
+    # --------------------------------------------------------------------- #
+    # Chunked image processing
+    # --------------------------------------------------------------------- #
+    def process_image(self, img: Image, debug: bool = False) -> list[Bubble]:
+        img = self.preprocess_image(img)
+        full_width, full_height = img.size
+
+        if full_height <= self.CHUNK_HEIGHT:
+            results = self.engine.recognize_pil(img)
+            data = self.transform(results, img.size)
+            return self.filter_furigana(data, debug=debug)
+
+        y_offset = 0
+        all_transformed_results: list[Bubble] = []
+        seen_texts = set()
+
+        while y_offset < full_height:
+            chunk_end = min(y_offset + self.CHUNK_HEIGHT, full_height)
+            box = (0, y_offset, full_width, chunk_end)
+            chunk_image = img.crop(box)
+            chunk_width, chunk_height = chunk_image.size
+
+            results = self.engine.recognize_pil(chunk_image)
+            data = self.transform(results, chunk_image.size)
+
+            for item in data:
+                bbox = item["tightBoundingBox"]
+                bbox["y"] = (bbox["y"] * chunk_height + y_offset) / full_height
+                bbox["height"] = (bbox["height"] * chunk_height) / full_height
+
+                if self.is_near_chunk_boundary(bbox, chunk_height, y_offset, full_height):
+                    continue
+
+                text_key = (item["text"], round(bbox["x"] * 100), round(bbox["y"] * 100))
+                if text_key not in seen_texts:
+                    seen_texts.add(text_key)
+                    all_transformed_results.append(item)
+
+            y_offset += self.CHUNK_HEIGHT - self.OVERLAP
+
+        return self.filter_furigana(all_transformed_results, debug=debug)
+
+    # --------------------------------------------------------------------- #
+    # Result transformation
+    # --------------------------------------------------------------------- #
+    def transform(self, result, image_size) -> list[Bubble]:
+        if not result or not result.get("lines"):
+            return []
+
+        image_width, image_height = image_size
+        if image_width == 0 or image_height == 0:
+            return []
+
+        output_json = []
+        for line in result.get("lines", []):
+            text = line.get("text", "").strip()
+            rect = line.get("bounding_rect")
+            if not rect or not text or not line.get("words"):
+                continue
+
+            x_coords = [rect["x1"], rect["x2"], rect["x3"], rect["x4"]]
+            y_coords = [rect["y1"], rect["y2"], rect["y3"], rect["y4"]]
+
+            x_min, y_min = min(x_coords), min(y_coords)
+            x_max, y_max = max(x_coords), max(y_coords)
+            width, height = x_max - x_min, y_max - y_min
+
+            bubble = Bubble(
+                text=text,
+                tightBoundingBox=BoundingBox(
+                    x=x_min / image_width,
+                    y=y_min / image_height,
+                    width=width / image_width,
+                    height=height / image_height,
+                ),
+                orientation=90.0 if height > width else 0.0,
+                font_size=0.04,
+                confidence=sum(w.get("confidence", 0.95) for w in line["words"]) / len(line["words"]),
+            )
+            output_json.append(bubble)
+
+        return output_json
 
 class GoogleLens(Engine):
     def __init__(self):
@@ -488,6 +762,8 @@ def initialize_engine(engine_name: str) -> Engine:
         return GoogleLens()
     elif engine_name == "oneocr":
         return OneOCR()
+    elif engine_name == "oneocrfurigana":
+        return OneOCRFurigana()
     elif engine_name == "meikimanga":
         return MeikiMangaOCR()
     else:
