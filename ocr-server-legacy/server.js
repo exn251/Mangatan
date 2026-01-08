@@ -54,8 +54,8 @@ const AUTO_MERGE_CONFIG = {
 
 /**
  * Optimized Preprocessing for Mobile:
- * 1. Resizes to 1400px WIDTH (fast/light).
- * 2. Applies Threshold 170 (high contrast).
+ * 1. Resizes to 2500px WIDTH (fast/light).
+ * 2. Applies Threshold 120 (high contrast).
  * 3. Compresses to WebP Q75 (tiny payload).
  */
 async function preprocessImage(imageBuffer, targetWidth, threshold) {
