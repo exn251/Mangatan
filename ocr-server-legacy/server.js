@@ -1,4 +1,4 @@
-// server.js - V5.7 Mobile Optimized (Width 1400, Threshold 170)
+// server.js - V5.8 Mobile Optimized (Width 2500, Threshold 120)
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
