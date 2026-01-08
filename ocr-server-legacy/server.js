@@ -17,8 +17,8 @@ program
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
     .option('--no-preprocess', 'Disable image preprocessing (upscaling and binarization)')
     // UPDATED: Changed from target-height to target-width
-    .option('--target-width <number>', 'Target width for upscaling (default: 1400)', 1400)
-    .option('--threshold <number>', 'Binarization threshold 0-255 (default: 170)', 170)
+    .option('--target-width <number>', 'Target width for upscaling (default: 2500)', 2500)
+    .option('--threshold <number>', 'Binarization threshold 0-255 (default: 120)', 120)
     .parse(process.argv);
 
 const options = program.opts();
