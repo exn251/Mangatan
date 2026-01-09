@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining
 // @namespace    http://tampermonkey.net/
-// @version      24.5.29
-// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes alt attribute blanking, numbered container hiding, and duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts.
-// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Alt Blanking & Punctuation Fix & Merge Stability & Multi-Image Selector
+// @version      24.6.04
+// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection.
+// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu
 // @match        *://127.0.0.1*/*
 // @match        *://192.168.0.*/*
 // @match        *://suwayomi*/*
@@ -43,8 +43,10 @@
         focusScaleMultiplier: 1.1, soloHoverMode: true, deleteModifierKey: 'Alt',
         mergeModifierKey: 'Control', addSpaceOnMerge: false, colorTheme: 'grey',
         brightnessMode: 'light', focusFontColor: 'black',
-        // NEW: Mobile‑mode setting (default off)
-        mobileMode: false
+        // NEW: Mobile‑mode setting
+        mobileMode: true,
+        // NEW: Toggle for the Mobile FAB Menu
+        mobileEditMerging: false
     };
     let debugLog = [];
     const SETTINGS_KEY = 'gemini_ocr_settings_v24_pc_focus_color_ocr_error_resilience_editable';
@@ -53,6 +55,14 @@
     let activeSiteConfig = null, measurementSpan = null, activeImageForExport = null, activeOverlay = null;
     const UI = {};
     let mergeState = { anchorBox: null };
+
+    // NEW: Tool toggle states
+    const toolState = {
+        isMergeMode: false,
+        isEditMode: false,
+        isMenuOpen: false
+    };
+
     let resizeObserver, intersectionObserver, imageObserver, containerObserver, chapterObserver, navigationObserver;
     const visibleImages = new Set();
     let animationFrameId = null;
@@ -76,13 +86,6 @@
         originalStyles: null
     };
 
-    // --- Blank Image Alt Attributes & Hide Numbered Container Functionality ---
-    const blankAltConfig = {
-        containerSelector: '.MuiBox-root.muiltr-1noqzsz',
-        blankAltObserver: null,
-        hideNumberedObserver: null
-    };
-
     // --- OCR Duplicate Punctuation Remover Functionality ---
     const punctuationConfig = {
         originalSetAttribute: null,
@@ -97,112 +100,42 @@
         document.dispatchEvent(new CustomEvent('ocr-log-update'));
     };
 
-    // --- Blank Image Alt Attributes Functions ---
-    function blankImageAlts() {
-        const container = document.querySelector(blankAltConfig.containerSelector);
-        if (container) {
-            const images = container.querySelectorAll('img');
-            images.forEach(img => {
-                img.setAttribute('alt', '');
-            });
-        }
-    }
+// --- OCR Duplicate Punctuation Remover Functions ---
+function cleanPunctuation(text) {
+    if (!text) return text;
 
-// --- Hide Chapter Navigation Elements Functionality ---
-function hideChapterNavigation() {
-    const elementsToHide = document.querySelectorAll(`
-        .MuiStack-root.muiltr-1en8pj3,
-        .MuiStack-root.muiltr-1f9h8mh,
-        p.MuiTypography-root.MuiTypography-body1.muiltr-11hsbvc,
-        p.MuiTypography-root.MuiTypography-body1.muiltr-1vljxn2,
-        p.MuiTypography-root.MuiTypography-body1.muirtl-11hsbvc,
-        p.MuiTypography-root.MuiTypography-body1.muirtl-1vljxn2,
-        p.MuiTypography-root.MuiTypography-body1.muirtl-b1l7y4
-    `);
+    // Replace consecutive duplicates of ? or ! and other text
+    text = text.replace(/[ ]*!!+/g, '‼');
+    text = text.replace(/[ ]*\?\?+/g, '⁇');
+    text = text.replace(/[ ]*\.\.+/g, '\u2026');
+    text = text.replace(/[ ]*(!\?)+/g, '⁉');
+    text = text.replace(/[ ]*(\?!)+/g, '⁈');
+    text = text.replace(/[ ]*\u2026+/g, '\u2026');
+    text = text.replace(/[ ]*\u30FB\u30FB+/g, '\u2026');
+    text = text.replace(/[ ]*\uFF65\uFF65+/g, '\u2026');
 
-    elementsToHide.forEach(element => {
-        element.textContent = '';
-    });
+    // Replace 2 or more MIDDLE DOT (U+00B7) with ellipsis
+    text = text.replace(/[ ]*\u00B7\u00B7+/g, '\u2026');
+
+    // Replace one or more hyphens with prolonged sound mark
+    text = text.replace(/[ ]*-+/g, '\u30FC');
+
+    // Replace one or more EN DASH with HORIZONTAL BAR
+    text = text.replace(/[ ]*\u2013+/g, '\u2015');
+
+    // Replace colon with ellipsis
+    text = text.replace(/[ ]*:+[ ]*/g, '\u2026');
+
+    // Clean up any leftover single ? or ! or : that might remain after mixed sequences
+    text = text.replace(/^[!?:]+$/g, ''); // Remove if entire string is just !, ? or :
+    text = text.replace(/([⁉⁈‼⁇])[!?:]+/g, '$1'); // Remove any !, ? or : after special punctuation
+    text = text.replace(/[!?:]+([⁉⁈‼⁇])/g, '$1'); // Remove any !, ? or : before special punctuation
+
+    // Remove only U+0020 spaces (not other whitespace)
+    text = text.replace(/\u0020/g, '');
+
+    return text;
 }
-
-function setupBlankAltObservers() {
-    // Main observer for initial container detection
-    blankAltConfig.blankAltObserver = new MutationObserver((mutationsList, observer) => {
-        const container = document.querySelector(blankAltConfig.containerSelector);
-        if (container) {
-            blankImageAlts();
-            observer.disconnect();
-
-            // Set up observer for dynamic images
-            const imageObserver = new MutationObserver((mutations) => {
-                mutations.forEach(mutation => {
-                    mutation.addedNodes.forEach(node => {
-                        if (node.nodeType === 1) {
-                            if (node.tagName === 'IMG') {
-                                node.setAttribute('alt', '');
-                            }
-                            node.querySelectorAll('img').forEach(img => {
-                                img.setAttribute('alt', '');
-                            });
-                        }
-                    });
-                });
-            });
-            imageObserver.observe(container, { childList: true, subtree: true });
-        }
-    });
-
-        // NEW: Observer for hiding chapter navigation elements (runs continuously)
-        blankAltConfig.hideChapterNavObserver = new MutationObserver(() => {
-            hideChapterNavigation();
-        });
-
-        // Start observers
-        blankAltConfig.blankAltObserver.observe(document.body, { childList: true, subtree: true });
-        blankAltConfig.hideChapterNavObserver.observe(document.body, { childList: true, subtree: true }); // NEW
-
-        // Run on load
-        window.addEventListener('load', () => {
-            blankImageAlts();
-            hideChapterNavigation(); // NEW
-        });
-
-        logDebug("Blank Image Alt Attributes & Chapter Navigation Hider functionality initialized"); // Updated log message
-    }
-
-    // --- OCR Duplicate Punctuation Remover Functions ---
-    function cleanPunctuation(text) {
-        if (!text) return text;
-
-        // Replace consecutive duplicates of ? or ! and other text
-        text = text.replace(/[ ]*!!+/g, '‼');
-        text = text.replace(/[ ]*\?\?+/g, '⁇');
-        text = text.replace(/[ ]*\.\.+/g, '\u2026');
-        text = text.replace(/[ ]*(!\?)+/g, '⁉');
-        text = text.replace(/[ ]*(\?!)+/g, '⁈');
-        text = text.replace(/[ ]*\u2026+/g, '\u2026');
-        text = text.replace(/[ ]*\u30FB\u30FB+/g, '\u2026');
-        text = text.replace(/[ ]*\uFF65\uFF65+/g, '\u2026');
-
-        // Replace one or more hyphens with prolonged sound mark
-        text = text.replace(/[ ]*-+/g, '\u30FC');
-
-        // Replace one or more EN DASH with HORIZONTAL BAR
-        text = text.replace(/[ ]*\u2013+/g, '\u2015');
-
-        // Replace colon with ellipsis
-        text = text.replace(/[ ]*:+[ ]*/g, '\u2026');
-
-        // Clean up any leftover single ? or ! or : that might remain after mixed sequences
-        text = text.replace(/^[!?:]+$/g, ''); // Remove if entire string is just !, ? or :
-        text = text.replace(/([⁉⁈‼⁇])[!?:]+/g, '$1'); // Remove any !, ? or : after special punctuation
-        text = text.replace(/[!?:]+([⁉⁈‼⁇])/g, '$1'); // Remove any !, ? or : before special punctuation
-
-        // Remove only U+0020 spaces (not other whitespace)
-        text = text.replace(/\u0020/g, '');
-
-        return text;
-    }
 
     // --- [ROBUST] Navigation Handling & State Reset ---
     function fullCleanupAndReset() {
@@ -393,6 +326,9 @@ function setupPageChangeDetection() {
 
     // --- Image Handling & OCR ---
     function observeImageForSrcChange(img) {
+                if (img.hasAttribute('alt')) {
+            img.removeAttribute('alt');
+        }
         const process = (src) => {
             if (src?.includes('/api/v1/manga/')) { primeImageForOcr(img); return true; }
             return false;
@@ -822,10 +758,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
     document.querySelectorAll('.gemini-ocr-text-box.selected-for-merge')
         .forEach(box => box.classList.remove('selected-for-merge'));
 
-    // Update merge button state if it exists
-    const mergeButton = document.getElementById('gemini-ocr-merge-button');
-    if (mergeButton) mergeButton.classList.remove('active');
-
     // Sync changes to server
     syncCacheToServer(sourceImage).then(success => {
         if (!success) {
@@ -1103,6 +1035,20 @@ function displayOcrResults(targetImg) {
         }
     });
 
+    // Helper to reset tool states
+    const resetToolState = () => {
+        toolState.isMergeMode = false;
+        toolState.isEditMode = false;
+        // Update UI classes for FAB buttons
+        if (UI.fabMerge) UI.fabMerge.classList.remove('active-mode');
+        if (UI.fabEdit) UI.fabEdit.classList.remove('active-mode');
+        // Clear merge selection
+        if (mergeState.anchorBox) {
+             mergeState.anchorBox.classList.remove('selected-for-merge');
+             mergeState.anchorBox = null;
+        }
+    };
+
     // MERGE FIX: Enhanced click handler for better reliability
     overlay.addEventListener('click', (e) => {
         // If we're currently editing, don't process normal clicks
@@ -1120,21 +1066,47 @@ function displayOcrResults(targetImg) {
         e.stopPropagation();
         e.preventDefault();
 
-        if (isModifierPressed(e, settings.deleteModifierKey)) {
+        // Determine active modes (Key modifier OR toggle button)
+        const isDelete = isModifierPressed(e, settings.deleteModifierKey);
+        const isMerge = isModifierPressed(e, settings.mergeModifierKey) || toolState.isMergeMode;
+        const isEdit = toolState.isEditMode;
+
+        if (isDelete) {
             handleBoxDelete(clickedBox, targetImg);
-        } else if (isModifierPressed(e, settings.mergeModifierKey)) {
+        } else if (isMerge) {
             if (!mergeState.anchorBox) {
                 mergeState.anchorBox = clickedBox;
                 clickedBox.classList.add('selected-for-merge');
                 logDebug('Merge anchor selected: ' + clickedBox.dataset.fullText);
             } else if (mergeState.anchorBox !== clickedBox) {
-                handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
-                logDebug('Merge completed');
+                // If using the button toggle mode, ask for confirmation
+                if (toolState.isMergeMode) {
+                     clickedBox.classList.add('selected-for-merge'); // Highlight visually
+                     // Use setTimeout to allow the browser to render the highlight before alerting
+                     setTimeout(() => {
+                        if (confirm("Merge these text boxes?")) {
+                            handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
+                            logDebug('Merge completed (via mobile tool)');
+                            resetToolState(); // EXIT MERGE MODE AUTOMATICALLY
+                        } else {
+                            clickedBox.classList.remove('selected-for-merge');
+                            // We keep the anchor selected in case they want to pick a different box
+                        }
+                     }, 10);
+                } else {
+                    // PC Modifier key mode - standard behavior
+                    handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
+                    logDebug('Merge completed');
+                }
             } else {
                 clickedBox.classList.remove('selected-for-merge');
                 mergeState.anchorBox = null;
                 logDebug('Merge anchor deselected');
             }
+        } else if (isEdit) {
+            // Single click edit mode
+            enterEditMode(clickedBox, targetImg);
+            resetToolState(); // EXIT EDIT MODE AUTOMATICALLY
         } else if (settings.interactionMode === 'click') {
             overlay.querySelectorAll('.manual-highlight').forEach(b => b.classList.remove('manual-highlight'));
             clickedBox.classList.add('manual-highlight');
@@ -1874,209 +1846,577 @@ function applyTheme() {
         document.body.classList.toggle('mobile-mode', settings.mobileMode);
     }
 
-    function createUI() {
-        // Existing style block
-        GM_addStyle(`
-            .gemini-ocr-decoupled-overlay { position: fixed; z-index: 9998; pointer-events: none; opacity: 0; display: none; }
-            .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
-            .gemini-ocr-decoupled-overlay.is-focused .gemini-ocr-text-box { pointer-events: auto; }
-            ::selection { background-color: rgba(var(--accent), 1); color: #FFFFFF; }
-.gemini-ocr-text-box {
-    position: absolute;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-    box-sizing: border-box;
-    user-select: text;
-    cursor: pointer;
-    transition: opacity 0.2s, transform 0.1s;
-    overflow: visible !important; /* Changed from hidden to visible */
-    font-family: 'Noto Sans JP', sans-serif;
-    font-weight: 600;
-    padding: 2px !important; /* Add some padding */
-    border-radius: 4px;
-    border: none;
-    text-shadow: none;
-    pointer-events: none;
-    min-height: 30px !important; /* Increased minimum height */
-    min-width: 30px !important;  /* Increased minimum width */
-}
+function createUI() {
+    // Existing style block
+    GM_addStyle(`
+        /* --- GHOST TEXT: Suwayomi UI Fix --- */
+        /* Applies to Suwayomi text elements so Yomitan ignores them */
+        .yomitan-ghost-text {
+            /* Hide the DOM text node so Yomitan ignores it */
+            visibility: hidden !important;
 
-/* Ensure focused boxes can overflow properly */
-.interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-.interaction-mode-click.is-focused .manual-highlight {
-    z-index: 1;
-    transform: scale(var(--ocr-focus-scale, 1.1)) !important;
-    overflow: visible !important;
-    min-height: 40px !important; /* Larger minimum when focused */
-    min-width: 40px !important;
-}
+            /* Establish a positioning context for the ::after element */
+            position: relative !important;
 
-/* Mobile responsive adjustments */
-@media (max-width: 768px) {
-    .gemini-ocr-text-box {
-        min-width: 40px !important;
-        min-height: 40px !important;
-        font-size: 24px !important; /* Enforce your minimum on mobile */
-    }
-}
-            .gemini-ocr-text-box.selected-for-merge { outline: 3px solid #f1c40f !important; outline-offset: 2px; box-shadow: 0 0 12px #f1c40f !important; z-index: 2; }
-            body.ocr-brightness-light .gemini-ocr-text-box { background: rgba(var(--background), 1); color: rgba(var(--accent), 0.5); box-shadow: 0 0 0 0.1em rgba(var(--background), 1); }
-            body.ocr-brightness-light .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            body.ocr-brightness-light .interaction-mode-click.is-focused .manual-highlight { background: rgba(var(--background), 1); color: rgba(var(--accent), 1); box-shadow: 0 0 0 0.1em rgba(var(--background), 1), 0 0 0 0.2em rgba(var(--accent), 1); }
-            body.ocr-brightness-dark .gemini-ocr-text-box { background: rgba(29, 34, 39, 0.9); color: rgba(var(--background), 0.7); box-shadow: 0 0 0 0.1em rgba(var(--accent), 0.4); backdrop-filter: blur(2px); }
-            body.ocr-brightness-dark .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            body.ocr-brightness-dark .interaction-mode-click.is-focused .manual-highlight { background: rgba(var(--accent), 1); color: #FFFFFF; box-shadow: 0 0 0 0.1em rgba(var(--accent), 0.4), 0 0 0 0.2em rgba(var(--background), 1); }
-            .ocr-focus-color-mode-black .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            .ocr-focus-color-mode-black .interaction-mode-click.is-focused .manual-highlight { color: #000000 !important; text-shadow: 0 0 2px #FFFFFF, 0 0 4px #FFFFFF; }
-            .ocr-focus-color-mode-white .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            .ocr-focus-color-mode-white .interaction-mode-click.is-focused .manual-highlight { color: #FFFFFF !important; text-shadow: 0 0 2px #000000, 0 0 4px #000000; }
-            .ocr-focus-color-mode-difference .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-            .ocr-focus-color-mode-difference .interaction-mode-click.is-focused .manual-highlight { color: white !important; mix-blend-mode: difference; background: transparent !important; box-shadow: none !important; }
-            .gemini-ocr-text-vertical { writing-mode: vertical-rl; text-orientation: upright; }
-.interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-.interaction-mode-click.is-focused .manual-highlight {
-    z-index: 1;
-    transform: scale(var(--ocr-focus-scale, 1.1)) !important; /* Added !important and fallback */
-    overflow: visible !important;
-}
+            /* Respect the original element's display (block, flex, inline, etc.) */
+            display: inherit !important;
+        }
 
-            .interaction-mode-hover.is-focused:not(.solo-hover-mode):has(.gemini-ocr-text-box:hover) .gemini-ocr-text-box:not(:hover),
-            .interaction-mode-click.is-focused.has-manual-highlight .gemini-ocr-text-box:not(.manual-highlight) { opacity: var(--ocr-dimmed-opacity); }
-            .solo-hover-mode.is-focused .gemini-ocr-text-box { opacity: 0; }
-            .solo-hover-mode.is-focused .gemini-ocr-text-box:hover { opacity: 1; }
+        .yomitan-ghost-text::after {
+            /* Pull the text from the data attribute */
+            content: attr(data-text);
 
-            /* Editable text box styles */
-.gemini-ocr-text-box.editing {
-    background: rgba(255, 255, 255, 0.95) !important;
-    color: #000 !important;
-    z-index: 10000 !important;
-    border: 2px solid #3498db !important;
-    border-radius: 4px !important;
-    padding: 0px !important;
-    white-space: pre !important; /* CHANGED from pre-wrap to pre */
-    text-align: left !important;
-    overflow: auto !important; /* Keep auto for scrollbars if needed */
-    overflow-wrap: normal !important; /* ADDED: prevent word breaking */
-    word-wrap: normal !important; /* ADDED: prevent word breaking */
-    cursor: text !important;
-    min-width: max-content !important; /* ADDED: prevent shrinking */
-    min-height: max-content !important; /* ADDED: prevent shrinking */
-}
-/* For vertical text in edit mode */
-.gemini-ocr-text-box.editing.gemini-ocr-text-vertical {
-    white-space: pre !important;
-    text-align: start !important;
-}
+            /* Make the CSS text visible to the human eye */
+            visibility: visible !important;
 
-            .gemini-ocr-chapter-batch-btn { font-family: "Roboto","Helvetica","Arial",sans-serif; font-weight: 500; font-size: 0.75rem; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(240,153,136,0.5); color: #f09988; background-color: transparent; cursor: pointer; margin-right: 4px; transition: all 150ms; min-width: 80px; text-align: center; } .gemini-ocr-chapter-batch-btn:hover { background-color: rgba(240,153,136,0.08); } .gemini-ocr-chapter-batch-btn:disabled { color: grey; border-color: grey; cursor: wait; } #gemini-ocr-settings-button { position: fixed; bottom: 15px; right: 15px; z-index: 2147483647; background: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 26px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0,0,0,0.5); user-select: none; transition: all 0.2s ease; line-height: 1; } #gemini-ocr-settings-button:hover { background: #2A2D31; transform: scale(1.1); } #gemini-ocr-global-anki-export-btn { position: fixed; bottom: 75px; right: 15px; z-index: 2147483646; background-color: #1A1D21; color: #EAEAEA; border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 30px; cursor: pointer; transition: all 0.2s ease; user-select: none; box-shadow: 0 4px 12px rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; line-height: 1; } #gemini-ocr-global-anki-export-btn:hover { background-color: #27ae60; transform: scale(1.1); } #gemini-ocr-global-anki-export-btn:disabled { background-color: #95a5a6; cursor: wait; transform: none; } #gemini-ocr-global-anki-export-btn.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; transform: scale(0.5); } .gemini-ocr-modal { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #1A1D21; border: 1px solid var(--modal-header-color, #00BFFF); border-radius: 15px; z-index: 2147483647; color: #EAEAEA; font-family: sans-serif; box-shadow: 0 8px 32px 0 rgba(0,0,0,0.5); width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column; } .gemini-ocr-modal.is-hidden { display: none; } .gemini-ocr-modal-header { padding: 20px 25px; border-bottom: 1px solid #444; } .gemini-ocr-modal-header h2 { margin: 0; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-modal-content { padding: 10px 25px; overflow-y: auto; flex-grow: 1; } .gemini-ocr-modal-footer { padding: 15px 25px; border-top: 1px solid #444; display: flex; justify-content: flex-start; gap: 10px; align-items: center; } .gemini-ocr-modal-footer button:last-of-type { margin-left: auto; } .gemini-ocr-modal h3 { font-size: 1.1em; margin: 15px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; color: var(--modal-header-color, #00BFFF); } .gemini-ocr-settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 15px; align-items: center; } .full-width { grid-column: 1 / -1; } .gemini-ocr-modal input, .gemini-ocr-modal textarea, .gemini-ocr-modal select { width: 100%; padding: 8px; box-sizing: border-box; font-family: monospace; background-color: #2a2a2e; border: 1px solid #555; border-radius: 5px; color: #EAEAEA; } .gemini-ocr-modal button { padding: 10px 18px; border: none; border-radius: 5px; color: #1A1D21; cursor: pointer; font-weight: bold; } #gemini-ocr-server-status { padding: 10px; border-radius: 5px; text-align: center; cursor: pointer; transition: background-color 0.3s; } #gemini-ocr-server-status.status-ok { background-color: #27ae60; } #gemini-ocr-server-status.status-error { background-color: #c0392b; } #gemini-ocr-server-status.status-checking { background-color: #3498db; }
+            /* Position the text exactly over the invisible original text */
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
 
-            /* ----------- RESPONSIVE ADJUSTMENTS (added) ----------- */
-@media (max-width: 768px) {
-    .gemini-ocr-text-box {
-        min-width: 30px;
-        min-height: 30px;
-        font-size: 14px !important; /* Enforce minimum on mobile */
-    }
-}
+            /* Inherit all typography styles to look identical to original */
+            font: inherit;
+            color: inherit;
+            letter-spacing: inherit;
+            text-align: inherit;
 
-                #gemini-ocr-global-anki-export-btn,
-                #gemini-ocr-settings-button {
-                    width: 60px;
-                    height: 60px;
-                    font-size: 32px;
-                }
+            /* Crucial for the description paragraph to wrap correctly */
+            white-space: pre-wrap;
+
+            /* Allow mouse interaction (clicks) to pass through if needed */
+            pointer-events: auto;
+        }
+        /* --- YOUR EXISTING OCR STYLES --- */
+        .gemini-ocr-decoupled-overlay { position: fixed; z-index: 9998; pointer-events: none; opacity: 0; display: none; }
+        .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
+        .gemini-ocr-decoupled-overlay.is-focused .gemini-ocr-text-box { pointer-events: auto; }
+        ::selection { background-color: rgba(var(--accent), 1); color: #FFFFFF; }
+        .gemini-ocr-text-box {
+            position: absolute;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            box-sizing: border-box;
+            user-select: text;
+            cursor: pointer;
+            transition: opacity 0.2s, transform 0.1s;
+            overflow: visible !important;
+            font-family: 'Noto Sans JP', sans-serif;
+            font-weight: 600;
+            padding: 2px !important;
+            border-radius: 4px;
+            border: none;
+            text-shadow: none;
+            pointer-events: none;
+            min-height: 30px !important;
+            min-width: 30px !important;
+        }
+
+        /* Ensure focused boxes can overflow properly */
+        .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .interaction-mode-click.is-focused .manual-highlight {
+            z-index: 1;
+            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
+            overflow: visible !important;
+            min-height: 40px !important;
+            min-width: 40px !important;
+        }
+
+        /* Mobile responsive adjustments */
+        @media (max-width: 768px) {
+            .gemini-ocr-text-box {
+                min-width: 40px !important;
+                min-height: 40px !important;
+                font-size: 24px !important;
             }
+        }
+        .gemini-ocr-text-box.selected-for-merge { outline: 3px solid #f1c40f !important; outline-offset: 2px; box-shadow: 0 0 12px #f1c40f !important; z-index: 2; }
+        body.ocr-brightness-light .gemini-ocr-text-box { background: rgba(var(--background), 1); color: rgba(var(--accent), 0.5); box-shadow: 0 0 0 0.1em rgba(var(--background), 1); }
+        body.ocr-brightness-light .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        body.ocr-brightness-light .interaction-mode-click.is-focused .manual-highlight { background: rgba(var(--background), 1); color: rgba(var(--accent), 1); box-shadow: 0 0 0 0.1em rgba(var(--background), 1), 0 0 0 0.2em rgba(var(--accent), 1); }
+        body.ocr-brightness-dark .gemini-ocr-text-box { background: rgba(29, 34, 39, 0.9); color: rgba(var(--background), 0.7); box-shadow: 0 0 0 0.1em rgba(var(--accent), 0.4); backdrop-filter: blur(2px); }
+        body.ocr-brightness-dark .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        body.ocr-brightness-dark .interaction-mode-click.is-focused .manual-highlight { background: rgba(var(--accent), 1); color: #FFFFFF; box-shadow: 0 0 0 0.1em rgba(var(--accent), 0.4), 0 0 0 0.2em rgba(var(--background), 1); }
+        .ocr-focus-color-mode-black .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .ocr-focus-color-mode-black .interaction-mode-click.is-focused .manual-highlight { color: #000000 !important; text-shadow: 0 0 2px #FFFFFF, 0 0 4px #FFFFFF; }
+        .ocr-focus-color-mode-white .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .ocr-focus-color-mode-white .interaction-mode-click.is-focused .manual-highlight { color: #FFFFFF !important; text-shadow: 0 0 2px #000000, 0 0 4px #000000; }
+        .ocr-focus-color-mode-difference .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .ocr-focus-color-mode-difference .interaction-mode-click.is-focused .manual-highlight { color: white !important; mix-blend-mode: difference; background: transparent !important; box-shadow: none !important; }
+        .gemini-ocr-text-vertical { writing-mode: vertical-rl; text-orientation: upright; }
+        .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .interaction-mode-click.is-focused .manual-highlight {
+            z-index: 1;
+            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
+            overflow: visible !important;
+        }
 
-        `);
+        .interaction-mode-hover.is-focused:not(.solo-hover-mode):has(.gemini-ocr-text-box:hover) .gemini-ocr-text-box:not(:hover),
+        .interaction-mode-click.is-focused.has-manual-highlight .gemini-ocr-text-box:not(.manual-highlight) { opacity: var(--ocr-dimmed-opacity); }
+        .solo-hover-mode.is-focused .gemini-ocr-text-box { opacity: 0; }
+        .solo-hover-mode.is-focused .gemini-ocr-text-box:hover { opacity: 1; }
 
-        // NEW: Mobile‑mode style block (disables animations)
-        GM_addStyle(`
-            .mobile-mode .gemini-ocr-text-box {
-                transition: none !important;
-                animation: none !important;
+        /* Editable text box styles */
+        .gemini-ocr-text-box.editing {
+            background: rgba(255, 255, 255, 0.95) !important;
+            color: #000 !important;
+            z-index: 10000 !important;
+            border: 2px solid #3498db !important;
+            border-radius: 4px !important;
+            padding: 0px !important;
+            white-space: pre !important;
+            text-align: left !important;
+            overflow: auto !important;
+            overflow-wrap: normal !important;
+            word-wrap: normal !important;
+            cursor: text !important;
+            min-width: max-content !important;
+            min-height: max-content !important;
+        }
+        /* For vertical text in edit mode */
+        .gemini-ocr-text-box.editing.gemini-ocr-text-vertical {
+            white-space: pre !important;
+            text-align: start !important;
+        }
+
+        /* Chapter Batch Button */
+        .gemini-ocr-chapter-batch-btn {
+            font-family: "Roboto", "Helvetica", "Arial", sans-serif;
+            font-weight: 500;
+            font-size: 0.75rem;
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(240, 153, 136, 0.5);
+            color: #f09988;
+            background-color: transparent;
+            cursor: pointer;
+            margin-right: 4px;
+            transition: all 150ms;
+            min-width: 80px;
+            text-align: center;
+        }
+        .gemini-ocr-chapter-batch-btn:hover {
+            background-color: rgba(240, 153, 136, 0.08);
+        }
+        .gemini-ocr-chapter-batch-btn:disabled {
+            color: grey;
+            border-color: grey;
+            cursor: wait;
+        }
+
+/* Settings Button - 20% Larger */
+        #gemini-ocr-settings-button {
+            position: fixed;
+            bottom: 10px;
+            right: 15px;
+            z-index: 2147483647;
+            background: #1A1D21;
+            color: #EAEAEA;
+            border: 1px solid #555;
+            border-radius: 50%;
+            width: 50px;    /* Increased from 35px */
+            height: 50px;   /* Increased from 35px */
+            font-size: 26px; /* Increased from 18px */
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            user-select: none;
+            transition: all 0.2s ease;
+            line-height: 1;
+        }
+        #gemini-ocr-settings-button:hover {
+            background: #2A2D31;
+            transform: scale(1.1);
+        }
+
+        /* ----------------- FAB / Speed Dial Menu CSS ----------------- */
+        .gemini-ocr-fab-container {
+            position: fixed;
+            bottom: 64px;
+            right: 15px;
+            z-index: 2147483646;
+            display: flex;
+            flex-direction: column-reverse;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .gemini-ocr-fab-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 1px solid #555;
+            background: #1A1D21;
+            color: #EAEAEA;
+            font-size: 26px;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            user-select: none;
+            line-height: 1;
+        }
+
+        .gemini-ocr-fab-btn:hover {
+            background: #27ae60;
+            transform: scale(1.1);
+        }
+
+        .gemini-ocr-fab-child {
+            transform: scale(0);
+            opacity: 0;
+            height: 0;
+            margin: 0;
+            border: 0;
+            pointer-events: none;
+        }
+
+        .gemini-ocr-fab-container.is-open .gemini-ocr-fab-child {
+            transform: scale(1);
+            opacity: 1;
+            height: 40px;
+            width: 40px;
+            pointer-events: auto;
+            border: 1px solid #555;
+        }
+
+        .gemini-ocr-fab-btn.active-mode {
+            background-color: #f1c40f !important;
+            color: #000 !important;
+            border-color: #fff !important;
+            box-shadow: 0 0 10px #f1c40f;
+        }
+
+        .gemini-ocr-fab-container.is-open #gemini-ocr-fab-main {
+            transform: rotate(45deg);
+            background-color: #c0392b;
+        }
+
+        /* Modals & Layout */
+        .gemini-ocr-modal {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #1A1D21;
+            border: 1px solid var(--modal-header-color, #00BFFF);
+            border-radius: 15px;
+            z-index: 2147483647;
+            color: #EAEAEA;
+            font-family: sans-serif;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            width: 600px;
+            max-width: 90vw;
+            max-height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .gemini-ocr-modal.is-hidden {
+            display: none;
+        }
+        .gemini-ocr-modal-header {
+            padding: 20px 25px;
+            border-bottom: 1px solid #444;
+        }
+        .gemini-ocr-modal-header h2 {
+            margin: 0;
+            color: var(--modal-header-color, #00BFFF);
+        }
+        .gemini-ocr-modal-content {
+            padding: 10px 25px;
+            overflow-y: auto;
+            flex-grow: 1;
+        }
+        .gemini-ocr-modal-footer {
+            padding: 15px 25px;
+            border-top: 1px solid #444;
+            display: flex;
+            justify-content: flex-start;
+            gap: 10px;
+            align-items: center;
+        }
+        .gemini-ocr-modal-footer button:last-of-type {
+            margin-left: auto;
+        }
+        .gemini-ocr-modal h3 {
+            font-size: 1.1em;
+            margin: 15px 0 10px 0;
+            border-bottom: 1px solid #333;
+            padding-bottom: 5px;
+            color: var(--modal-header-color, #00BFFF);
+        }
+        .gemini-ocr-settings-grid {
+            display: grid;
+            grid-template-columns: max-content 1fr;
+            gap: 10px 15px;
+            align-items: center;
+        }
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        .gemini-ocr-modal input,
+        .gemini-ocr-modal textarea,
+        .gemini-ocr-modal select {
+            width: 100%;
+            padding: 8px;
+            box-sizing: border-box;
+            font-family: monospace;
+            background-color: #2a2a2e;
+            border: 1px solid #555;
+            border-radius: 5px;
+            color: #EAEAEA;
+        }
+        .gemini-ocr-modal button {
+            padding: 10px 18px;
+            border: none;
+            border-radius: 5px;
+            color: #1A1D21;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        #gemini-ocr-server-status {
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #gemini-ocr-server-status.status-ok {
+            background-color: #27ae60;
+        }
+        #gemini-ocr-server-status.status-error {
+            background-color: #c0392b;
+        }
+        #gemini-ocr-server-status.status-checking {
+            background-color: #3498db;
+        }
+
+        @media (max-width: 768px) {
+            .gemini-ocr-text-box {
+                min-width: 30px;
+                min-height: 30px;
+                font-size: 14px !important;
             }
-.mobile-mode .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-.mobile-mode .interaction-mode-click.is-focused .manual-highlight {
-    transform: scale(var(--ocr-focus-scale, 1.1)) !important; /* Keep the scale */
-    transition: none !important; /* Only remove transition */
-}
-        `);
+            #gemini-ocr-settings-button, .gemini-ocr-fab-btn {
+                width: 45px;
+                height: 45px;
+                font-size: 24px;
+            }
+        }
+    `);
 
-        document.body.insertAdjacentHTML('beforeend', `
-            <button id="gemini-ocr-global-anki-export-btn" title="Export Screenshot to Anki">➕</button>
-            <button id="gemini-ocr-settings-button">⚙️</button>
-            <div id="gemini-ocr-settings-modal" class="gemini-ocr-modal is-hidden">
-                <div class="gemini-ocr-modal-header"><h2>Mangatan Settings</h2></div>
-                <div class="gemini-ocr-modal-content">
-                    <h3>OCR & Image Source</h3>
-                    <div class="gemini-ocr-settings-grid full-width">
-                        <label for="gemini-ocr-server-url">OCR Server URL:</label><input type="text" id="gemini-ocr-server-url">
-                        <label for="gemini-image-server-user">Image Source Username:</label><input type="text" id="gemini-image-server-user" autocomplete="username" placeholder="Optional">
-                        <label for="gemini-image-server-password">Image Source Password:</label><input type="password" id="gemini-image-server-password" autocomplete="current-password" placeholder="Optional">
-                    </div>
-                    <div id="gemini-ocr-server-status" class="full-width" style="margin-top: 10px;">Click to check server status</div>
+    // Mobile-mode style block
+    GM_addStyle(`
+        .mobile-mode .gemini-ocr-text-box {
+            transition: none !important;
+            animation: none !important;
+        }
+        .mobile-mode .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
+        .mobile-mode .interaction-mode-click.is-focused .manual-highlight {
+            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
+            transition: none !important;
+        }
+    `);
 
-                    <h3>Anki Integration</h3>
-                    <div class="gemini-ocr-settings-grid">
-                        <label for="gemini-ocr-anki-url">Anki-Connect URL:</label><input type="text" id="gemini-ocr-anki-url">
-                        <label for="gemini-ocr-anki-field">Image Field Name:</label><input type="text" id="gemini-ocr-anki-field" placeholder="e.g., Image">
-                    </div>
+    document.body.insertAdjacentHTML('beforeend', `
+        <div id="gemini-ocr-fab-container" class="gemini-ocr-fab-container">
+            <!-- Main Toggle -->
+            <button id="gemini-ocr-fab-main" class="gemini-ocr-fab-btn" title="Menu">➕</button>
 
-                    <h3>Interaction & Display</h3>
-                    <div class="gemini-ocr-settings-grid">
-                        <label for="ocr-brightness-mode">Theme Mode:</label><select id="ocr-brightness-mode"><option value="light">Light</option><option value="dark">Dark</option></select>
-                        <label for="ocr-color-theme">Color Theme:</label><select id="ocr-color-theme">${Object.keys(COLOR_THEMES).map(t => `<option value="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}</select>
-                        <label for="ocr-interaction-mode">Highlight Mode:</label><select id="ocr-interaction-mode"><option value="hover">On Hover</option><option value="click">On Click</option></select>
-                        <label for="ocr-focus-font-color">Focus Font Color:</label><select id="ocr-focus-font-color"><option value="default">Default</option><option value="black">Black</option><option value="white">White</option><option value="difference">Difference (Blend)</option></select>
-                        <label for="ocr-dimmed-opacity">Dimmed Box Opacity (%):</label><input type="number" id="ocr-dimmed-opacity" min="0" max="100" step="5">
-                        <label for="ocr-focus-scale-multiplier">Focus Scale Multiplier:</label><input type="number" id="ocr-focus-scale-multiplier" min="1" max="3" step="0.05">
-                        <label for="ocr-delete-key">Delete Modifier Key:</label><input type="text" id="ocr-delete-key" placeholder="Control, Alt, Shift...">
-                        <label for="ocr-merge-key">Merge Modifier Key:</label><input type="text" id="ocr-merge-key" placeholder="Control, Alt, Shift...">
-                        <label for="ocr-text-orientation">Text Orientation:</label><select id="ocr-text-orientation"><option value="smart">Smart</option><option value="forceHorizontal">Horizontal</option><option value="forceVertical">Vertical</option></select>
-                        <label for="ocr-font-multiplier-horizontal">H. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-horizontal" min="0.1" max="5" step="0.1">
-                        <label for="ocr-font-multiplier-vertical">V. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-vertical" min="0.1" max="5" step="0.1">
-                        <label for="ocr-bounding-box-adjustment-input">Box Adjustment (px):</label><input type="number" id="ocr-bounding-box-adjustment-input" min="0" max="100" step="1">
-                    </div>
-                    <div class="gemini-ocr-settings-grid full-width">
-                        <label><input type="checkbox" id="gemini-ocr-solo-hover-mode"> Only show hovered box (Hover Mode)</label>
-                        <label><input type="checkbox" id="gemini-ocr-add-space-on-merge"> Add space on merge</label>
-                    </div>
-                    <!-- NEW: Mobile mode checkbox -->
-                    <div class="gemini-ocr-settings-grid full-width">
-                        <label><input type="checkbox" id="gemini-ocr-mobile-mode"> Mobile Mode (Disable Animations)</label>
-                    </div>
+            <!-- Child Buttons -->
+            <button id="gemini-ocr-fab-edit" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Edit Mode (Single Click)">✏️</button>
+            <button id="gemini-ocr-fab-merge" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Merge Mode (Click 2 boxes)">🔗</button>
+            <button id="gemini-ocr-fab-anki" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Export Screenshot to Anki">⛏️</button>
+        </div>
 
-                    <h3>Advanced</h3>
-                    <div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-debug-mode"> Debug Mode</label></div>
-                    <div class="gemini-ocr-settings-grid full-width">
-                        <label for="gemini-ocr-sites-config">Site Configurations (URL; OverflowFix; Containers...)</label>
-                        <textarea id="gemini-ocr-sites-config" rows="6" placeholder="127.0.0.1; .overflow-fix; .container1; .container2"></textarea>
-                    </div>
+        <button id="gemini-ocr-settings-button">⚙️</button>
+        <div id="gemini-ocr-settings-modal" class="gemini-ocr-modal is-hidden">
+            <div class="gemini-ocr-modal-header"><h2>Mangatan Settings</h2></div>
+            <div class="gemini-ocr-modal-content">
+                <h3>OCR & Image Source</h3>
+                <div class="gemini-ocr-settings-grid full-width">
+                    <label for="gemini-ocr-server-url">OCR Server URL:</label><input type="text" id="gemini-ocr-server-url">
+                    <label for="gemini-image-server-user">Image Source Username:</label><input type="text" id="gemini-image-server-user" autocomplete="username" placeholder="Optional">
+                    <label for="gemini-image-server-password">Image Source Password:</label><input type="password" id="gemini-image-server-password" autocomplete="current-password" placeholder="Optional">
                 </div>
-                <div class="gemini-ocr-modal-footer">
-                    <button id="gemini-ocr-purge-cache-btn" style="background-color: #c0392b;" title="Deletes all entries from the server's OCR cache file.">Purge Server Cache</button>
-                    <button id="gemini-ocr-batch-chapter-btn" style="background-color: #3498db;" title="Queues the current chapter on the server for background pre-processing.">Pre-process Chapter</button>
-                    <button id="gemini-ocr-debug-btn" style="background-color: #777;">Debug</button>
-                    <button id="gemini-ocr-close-btn" style="background-color: #555;">Close</button>
-                    <button id="gemini-ocr-save-btn" style="background-color: #3ad602;">Save & Reload</button>
+                <div id="gemini-ocr-server-status" class="full-width" style="margin-top: 10px;">Click to check server status</div>
+
+                <h3>Anki Integration</h3>
+                <div class="gemini-ocr-settings-grid">
+                    <label for="gemini-ocr-anki-url">Anki-Connect URL:</label><input type="text" id="gemini-ocr-anki-url">
+                    <label for="gemini-ocr-anki-field">Image Field Name:</label><input type="text" id="gemini-ocr-anki-field" placeholder="e.g., Image">
+                </div>
+
+                <h3>Interaction & Display</h3>
+                <div class="gemini-ocr-settings-grid">
+                    <label for="ocr-brightness-mode">Theme Mode:</label><select id="ocr-brightness-mode"><option value="light">Light</option><option value="dark">Dark</option></select>
+                    <label for="ocr-color-theme">Color Theme:</label><select id="ocr-color-theme">${Object.keys(COLOR_THEMES).map(t => `<option value="${t}">${t.charAt(0).toUpperCase()+t.slice(1)}</option>`).join('')}</select>
+                    <label for="ocr-interaction-mode">Highlight Mode:</label><select id="ocr-interaction-mode"><option value="hover">On Hover</option><option value="click">On Click</option></select>
+                    <label for="ocr-focus-font-color">Focus Font Color:</label><select id="ocr-focus-font-color"><option value="default">Default</option><option value="black">Black</option><option value="white">White</option><option value="difference">Difference (Blend)</option></select>
+                    <label for="ocr-dimmed-opacity">Dimmed Box Opacity (%):</label><input type="number" id="ocr-dimmed-opacity" min="0" max="100" step="5">
+                    <label for="ocr-focus-scale-multiplier">Focus Scale Multiplier:</label><input type="number" id="ocr-focus-scale-multiplier" min="1" max="3" step="0.05">
+                    <label for="ocr-delete-key">Delete Modifier Key:</label><input type="text" id="ocr-delete-key" placeholder="Control, Alt, Shift...">
+                    <label for="ocr-merge-key">Merge Modifier Key:</label><input type="text" id="ocr-merge-key" placeholder="Control, Alt, Shift...">
+                    <label for="ocr-text-orientation">Text Orientation:</label><select id="ocr-text-orientation"><option value="smart">Smart</option><option value="forceHorizontal">Horizontal</option><option value="forceVertical">Vertical</option></select>
+                    <label for="ocr-font-multiplier-horizontal">H. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-horizontal" min="0.1" max="5" step="0.1">
+                    <label for="ocr-font-multiplier-vertical">V. Font Multiplier:</label><input type="number" id="ocr-font-multiplier-vertical" min="0.1" max="5" step="0.1">
+                    <label for="ocr-bounding-box-adjustment-input">Box Adjustment (px):</label><input type="number" id="ocr-bounding-box-adjustment-input" min="0" max="100" step="1">
+                </div>
+                <div class="gemini-ocr-settings-grid full-width">
+                    <label><input type="checkbox" id="gemini-ocr-solo-hover-mode"> Only show hovered box (Hover Mode)</label>
+                    <label><input type="checkbox" id="gemini-ocr-add-space-on-merge"> Add space on merge</label>
+                </div>
+                <div class="gemini-ocr-settings-grid full-width">
+                    <label><input type="checkbox" id="gemini-ocr-mobile-mode"> Mobile Mode (Disable Animations)</label>
+                </div>
+                <div class="gemini-ocr-settings-grid full-width">
+                    <label><input type="checkbox" id="gemini-ocr-mobile-edit-merging"> Enable Mobile Menu (FAB)</label>
+                </div>
+
+                <h3>Advanced</h3>
+                <div class="gemini-ocr-settings-grid full-width"><label><input type="checkbox" id="gemini-ocr-debug-mode"> Debug Mode</label></div>
+                <div class="gemini-ocr-settings-grid full-width">
+                    <label for="gemini-ocr-sites-config">Site Configurations (URL; OverflowFix; Containers...)</label>
+                    <textarea id="gemini-ocr-sites-config" rows="6" placeholder="127.0.0.1; .overflow-fix; .container1; .container2"></textarea>
                 </div>
             </div>
-
-            <div id="gemini-ocr-debug-modal" class="gemini-ocr-modal is-hidden">
-                <div class="gemini-ocr-modal-header"><h2>Debug Log</h2></div>
-                <div class="gemini-ocr-modal-content"><textarea id="gemini-ocr-debug-log" readonly style="width:100%; height: 100%; resize:none;"></textarea></div>
-                <div class="gemini-ocr-modal-footer"><button id="gemini-ocr-close-debug-btn" style="background-color: #555;">Close</button></div>
+            <div class="gemini-ocr-modal-footer">
+                <button id="gemini-ocr-purge-cache-btn" style="background-color: #c0392b;" title="Deletes all entries from the server's OCR cache file.">Purge Server Cache</button>
+                <button id="gemini-ocr-batch-chapter-btn" style="background-color: #3498db;" title="Queues the current chapter on the server for background pre-processing.">Pre-process Chapter</button>
+                <button id="gemini-ocr-debug-btn" style="background-color: #777;">Debug</button>
+                <button id="gemini-ocr-close-btn" style="background-color: #555;">Close</button>
+                <button id="gemini-ocr-save-btn" style="background-color: #3ad602;">Save & Reload</button>
             </div>
-        `);
+        </div>
+
+        <div id="gemini-ocr-debug-modal" class="gemini-ocr-modal is-hidden">
+            <div class="gemini-ocr-modal-header"><h2>Debug Log</h2></div>
+            <div class="gemini-ocr-modal-content"><textarea id="gemini-ocr-debug-log" readonly style="width:100%; height: 100%; resize:none;"></textarea></div>
+            <div class="gemini-ocr-modal-footer"><button id="gemini-ocr-close-debug-btn" style="background-color: #555;">Close</button></div>
+        </div>
+    `);
+
+    // --- NEW: Ghost Text Logic for Suwayomi ---
+    // This finds Suwayomi's text elements and applies the ghost class so Yomitan ignores them.
+        function applyGhostTextToSuwayomi() {
+        // Target standard Suwayomi text containers (MuiTypography)
+        const textElements = document.querySelectorAll('.MuiTypography-root');
+
+        textElements.forEach(el => {
+            // 1. Skip if already processed
+            if (el.classList.contains('yomitan-ghost-text')) return;
+
+            // 2. CRITICAL FIX: Skip elements that contain other HTML tags (like links or icons).
+            // We want to target the inner <a> tag directly, not the container <p>.
+            // If we ghost the container, the inner link becomes unclickable.
+            if (el.firstElementChild) return;
+
+            // 3. Only apply if there is actual text content
+            if (el.innerText.trim().length > 0) {
+                el.setAttribute('data-text', el.innerText);
+                el.classList.add('yomitan-ghost-text');
+            }
+        });
     }
+
+    // Run immediately
+    applyGhostTextToSuwayomi();
+
+    // Run constantly via observer to catch new React renders (page changes, etc.)
+    const ghostObserver = new MutationObserver((mutations) => {
+        let shouldRun = false;
+        for (const m of mutations) {
+            if (m.type === 'childList' && m.addedNodes.length > 0) {
+                shouldRun = true;
+                break;
+            }
+        }
+        if (shouldRun) applyGhostTextToSuwayomi();
+    });
+
+    // Observe the root app container
+    const appRoot = document.getElementById('root') || document.body;
+    ghostObserver.observe(appRoot, { childList: true, subtree: true });
+}
+
+    // Abstracted Anki Export Function for reuse
+    const handleAnkiExportClick = async () => {
+        let targetImage = activeImageForExport;
+        // NEW: Use enhanced function that falls back to visible images
+        const validRecentImages = getValidImagesForExport();
+
+        // If we have multiple valid images, show a selection UI
+        if (validRecentImages.length > 1) {
+            targetImage = await showImageSelectionDialog(validRecentImages);
+            if (!targetImage) return; // User cancelled
+        } else if (validRecentImages.length === 1) {
+            targetImage = validRecentImages[0].image;
+        }
+
+        // Get current chapter for validation
+        const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+
+        if (targetImage) {
+            const imageChapterMatch = targetImage.src.match(/\/manga\/\d+\/chapter\/\d+/);
+            const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
+
+            const isValid = (
+                targetImage.isConnected &&
+                managedElements.has(targetImage) &&
+                targetImage.offsetParent !== null &&
+                targetImage.naturalHeight > 0 &&
+                isFromCurrentChapter
+            );
+
+            if (!isValid) {
+                targetImage = null;
+                activeImageForExport = null;
+            }
+        }
+
+        const btn = settings.mobileEditMerging ? UI.fabAnki : UI.fabMain;
+
+        if (targetImage) {
+            try {
+                btn.textContent = '⏳';
+                btn.disabled = true;
+                const success = await exportImageToAnki(targetImage);
+                btn.textContent = success ? '✓' : '✖';
+                btn.style.backgroundColor = success ? '#27ae60' : '#c0392b';
+            } catch (error) {
+                btn.textContent = '❌';
+                btn.style.backgroundColor = '#c0392b';
+            } finally {
+                setTimeout(() => {
+                    btn.textContent = settings.mobileEditMerging ? '⛏️' : '➕';
+                    btn.style.backgroundColor = '';
+                    btn.disabled = false;
+                }, 2000);
+            }
+        } else {
+            alert("No images available for export. Please wait for images to load.");
+        }
+    };
 
     function bindUIEvents() {
         Object.assign(UI, {
             settingsButton: document.getElementById('gemini-ocr-settings-button'),
             settingsModal: document.getElementById('gemini-ocr-settings-modal'),
-            globalAnkiButton: document.getElementById('gemini-ocr-global-anki-export-btn'),
+
+            // FAB Buttons
+            fabContainer: document.getElementById('gemini-ocr-fab-container'),
+            fabMain: document.getElementById('gemini-ocr-fab-main'),
+            fabEdit: document.getElementById('gemini-ocr-fab-edit'),
+            fabMerge: document.getElementById('gemini-ocr-fab-merge'),
+            fabAnki: document.getElementById('gemini-ocr-fab-anki'),
+
             debugModal: document.getElementById('gemini-ocr-debug-modal'),
             serverUrlInput: document.getElementById('gemini-ocr-server-url'),
             imageServerUserInput: document.getElementById('gemini-image-server-user'),
@@ -2086,8 +2426,10 @@ function applyTheme() {
             debugModeCheckbox: document.getElementById('gemini-ocr-debug-mode'),
             soloHoverCheckbox: document.getElementById('gemini-ocr-solo-hover-mode'),
             addSpaceOnMergeCheckbox: document.getElementById('gemini-ocr-add-space-on-merge'),
-            // NEW: Mobile mode checkbox
+            // NEW: Mobile mode checkboxes
             mobileModeCheckbox: document.getElementById('gemini-ocr-mobile-mode'),
+            mobileEditMergingCheckbox: document.getElementById('gemini-ocr-mobile-edit-merging'),
+
             interactionModeSelect: document.getElementById('ocr-interaction-mode'),
             dimmedOpacityInput: document.getElementById('ocr-dimmed-opacity'),
             textOrientationSelect: document.getElementById('ocr-text-orientation'),
@@ -2113,180 +2455,77 @@ function applyTheme() {
 
         UI.settingsButton.addEventListener('click', () => UI.settingsModal.classList.toggle('is-hidden'));
 
-// ENHANCED: Get valid images with fallback to visible images
-function getValidImagesForExport() {
-    const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
-    const validImages = [];
-
-    // First, check recently hovered images
-    for (const img of recentlyHoveredImages) {
-        const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
-        const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
-                                     currentChapterMatch[0] === imageChapterMatch[0];
-
-        if (img.isConnected &&
-            managedElements.has(img) &&
-            img.naturalHeight > 0 &&
-            isFromCurrentChapter) {
-
-            const rect = img.getBoundingClientRect();
-            const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
-
-            validImages.push({
-                image: img,
-                rect: rect,
-                isInViewport: isInViewport,
-                pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
+        // --- NEW: FAB / Button Logic based on Settings ---
+        if (settings.mobileEditMerging) {
+            // Mode A: Toggleable Menu enabled
+            UI.fabMain.addEventListener('click', () => {
+                toolState.isMenuOpen = !toolState.isMenuOpen;
+                UI.fabContainer.classList.toggle('is-open', toolState.isMenuOpen);
             });
-        }
-    }
 
-    // If we have less than 2 valid images, supplement with visible images
-    if (validImages.length < 2) {
-        logDebug(`Only ${validImages.length} recent images, supplementing with visible images`);
-
-        const existingImageElements = new Set(validImages.map(item => item.image));
-
-        for (const img of visibleImages) {
-            // Skip if already in the list
-            if (existingImageElements.has(img)) continue;
-
-            const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
-            const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
-                                         currentChapterMatch[0] === imageChapterMatch[0];
-
-            if (img.isConnected &&
-                managedElements.has(img) &&
-                img.naturalHeight > 0 &&
-                isFromCurrentChapter) {
-
-                const rect = img.getBoundingClientRect();
-                const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
-
-                if (isInViewport) {
-                    validImages.push({
-                        image: img,
-                        rect: rect,
-                        isInViewport: isInViewport,
-                        pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
-                    });
-
-                    existingImageElements.add(img);
+            UI.fabEdit.addEventListener('click', () => {
+                toolState.isEditMode = !toolState.isEditMode;
+                // Exclusive modes
+                if (toolState.isEditMode) {
+                    toolState.isMergeMode = false;
+                    UI.fabMerge.classList.remove('active-mode');
                 }
-            }
+                UI.fabEdit.classList.toggle('active-mode', toolState.isEditMode);
+
+                // NEW: Close menu on click
+                toolState.isMenuOpen = false;
+                UI.fabContainer.classList.remove('is-open');
+            });
+
+            UI.fabMerge.addEventListener('click', () => {
+                toolState.isMergeMode = !toolState.isMergeMode;
+                // Exclusive modes
+                if (toolState.isMergeMode) {
+                    toolState.isEditMode = false;
+                    UI.fabEdit.classList.remove('active-mode');
+                } else {
+                    // Reset if turning off
+                    if (mergeState.anchorBox) {
+                        mergeState.anchorBox.classList.remove('selected-for-merge');
+                        mergeState.anchorBox = null;
+                    }
+                }
+                UI.fabMerge.classList.toggle('active-mode', toolState.isMergeMode);
+
+                // NEW: Close menu on click
+                toolState.isMenuOpen = false;
+                UI.fabContainer.classList.remove('is-open');
+            });
+
+            // Connect Anki Child Button
+            UI.fabAnki.addEventListener('click', () => {
+                 handleAnkiExportClick();
+                 // NEW: Close menu on click
+                 toolState.isMenuOpen = false;
+                 UI.fabContainer.classList.remove('is-open');
+            });
+
+        } else {
+            // Mode B: Simple Direct Anki Export (Default)
+            // Hide the child buttons permanently
+            UI.fabEdit.style.display = 'none';
+            UI.fabMerge.style.display = 'none';
+            UI.fabAnki.style.display = 'none';
+
+            // Make Main Button do the export
+            UI.fabMain.addEventListener('click', handleAnkiExportClick);
         }
-    }
 
-    // Sort by page number
-    validImages.sort((a, b) => a.pageNumber - b.pageNumber);
-
-    return validImages;
-}
-
-        // MULTI‑IMAGE SELECTOR: Updated Anki button handler
-UI.globalAnkiButton.addEventListener('click', async () => {
-    let targetImage = activeImageForExport;
-
-    console.log('[ANKI EXPORT DEBUG] Starting export...');
-    console.log('[ANKI EXPORT DEBUG] activeImageForExport:', targetImage ? targetImage.src : 'null');
-    console.log('[ANKI EXPORT DEBUG] Current URL:', window.location.href);
-    console.log('[ANKI EXPORT DEBUG] managedElements size:', managedElements.size);
-    console.log('[ANKI EXPORT DEBUG] recentlyHoveredImages size:', recentlyHoveredImages.size);
-    console.log('[ANKI EXPORT DEBUG] visibleImages size:', visibleImages.size);
-
-    // NEW: Use enhanced function that falls back to visible images
-    const validRecentImages = getValidImagesForExport();
-
-    console.log('[ANKI EXPORT DEBUG] Valid images for export:', validRecentImages.length);
-
-    // If we have multiple valid images, show a selection UI
-    if (validRecentImages.length > 1) {
-        targetImage = await showImageSelectionDialog(validRecentImages);
-        if (!targetImage) {
-            // User cancelled
-            return;
-        }
-    } else if (validRecentImages.length === 1) {
-        targetImage = validRecentImages[0].image;
-    }
-
-    // Get current chapter for validation
-    const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
-
-    // Validate the image
-    if (targetImage) {
-        const imageChapterMatch = targetImage.src.match(/\/manga\/\d+\/chapter\/\d+/);
-        const isFromCurrentChapter = currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0];
-
-        const isValid = (
-            targetImage.isConnected &&
-            managedElements.has(targetImage) &&
-            targetImage.offsetParent !== null &&
-            targetImage.naturalHeight > 0 &&
-            isFromCurrentChapter
-        );
-
-        console.log('[ANKI EXPORT DEBUG] Image validation:', {
-            isConnected: targetImage.isConnected,
-            hasInManagedElements: managedElements.has(targetImage),
-            offsetParent: targetImage.offsetParent !== null,
-            naturalHeight: targetImage.naturalHeight,
-            isFromCurrentChapter: isFromCurrentChapter,
-            isValid: isValid
-        });
-
-        if (!isValid) {
-            console.log('[ANKI EXPORT DEBUG] Image is stale/invalid or from wrong chapter!');
-            logDebug("Active image reference is invalid/stale.");
-            targetImage = null;
-            activeImageForExport = null;
-        }
-    }
-
-    if (targetImage) {
-        console.log('[ANKI EXPORT DEBUG] Final selected image:', targetImage.src);
-        logDebug(`Using image for Anki export: ${targetImage.src.slice(-50)}`);
-        const btn = UI.globalAnkiButton;
-
-        try {
-            btn.textContent = '⏳';
-            btn.disabled = true;
-
-            const success = await exportImageToAnki(targetImage);
-
-            btn.textContent = success ? '✓' : '✖';
-            btn.style.backgroundColor = success ? '#27ae60' : '#c0392b';
-
-            if (!success) {
-                logDebug("Anki export failed or was cancelled");
-            }
-        } catch (error) {
-            console.error('[ANKI EXPORT DEBUG] Unexpected error:', error);
-            btn.textContent = '❌';
-            btn.style.backgroundColor = '#c0392b';
-            logDebug(`Unexpected error during Anki export: ${error.message}`);
-        } finally {
-            setTimeout(() => {
-                btn.textContent = '➕';
-                btn.style.backgroundColor = '';
-                btn.disabled = false;
-            }, 2000);
-        }
-    } else {
-        console.log('[ANKI EXPORT DEBUG] NO VALID IMAGE FOUND!');
-        alert("No images available for export. Please wait for images to load.");
-        logDebug("EXPORT FAILED: No valid images found");
-    }
-});
-
-        UI.globalAnkiButton.addEventListener('mouseenter', () => {
+        // Hover handling for Anki buttons (both scenarios)
+        const relevantAnkiBtn = settings.mobileEditMerging ? UI.fabAnki : UI.fabMain;
+        relevantAnkiBtn.addEventListener('mouseenter', () => {
             const state = activeImageForExport ? managedElements.get(activeImageForExport) : null;
             if (state && state.hideTimer) {
                 clearTimeout(state.hideTimer);
                 state.hideTimer = null;
             }
         });
-        UI.globalAnkiButton.addEventListener('mouseleave', () => {
+        relevantAnkiBtn.addEventListener('mouseleave', () => {
             const state = activeImageForExport ? managedElements.get(activeImageForExport) : null;
             if (state) {
                 state.hideTimer = setTimeout(() => {
@@ -2318,8 +2557,10 @@ UI.globalAnkiButton.addEventListener('click', async () => {
                 debugMode: UI.debugModeCheckbox.checked,
                 soloHoverMode: UI.soloHoverCheckbox.checked,
                 addSpaceOnMerge: UI.addSpaceOnMergeCheckbox.checked,
-                // NEW: Save mobile mode
+                // NEW: Save mobile mode settings
                 mobileMode: UI.mobileModeCheckbox.checked,
+                mobileEditMerging: UI.mobileEditMergingCheckbox.checked,
+
                 interactionMode: UI.interactionModeSelect.value,
                 textOrientation: UI.textOrientationSelect.value,
                 colorTheme: UI.colorThemeSelect.value,
@@ -2358,6 +2599,70 @@ UI.globalAnkiButton.addEventListener('click', async () => {
             }
         });
     }
+
+// ENHANCED: Get valid images with fallback to visible images
+function getValidImagesForExport() {
+    const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
+    const validImages = [];
+
+    // First, check recently hovered images
+    for (const img of recentlyHoveredImages) {
+        const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
+        const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
+                                     currentChapterMatch[0] === imageChapterMatch[0];
+
+        if (img.isConnected &&
+            managedElements.has(img) &&
+            img.naturalHeight > 0 &&
+            isFromCurrentChapter) {
+
+            const rect = img.getBoundingClientRect();
+            const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+
+            validImages.push({
+                image: img,
+                rect: rect,
+                isInViewport: isInViewport,
+                pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
+            });
+        }
+    }
+
+    // If we have less than 2 valid images, supplement with visible images
+    if (validImages.length < 2) {
+        const existingImageElements = new Set(validImages.map(item => item.image));
+        for (const img of visibleImages) {
+            // Skip if already in the list
+            if (existingImageElements.has(img)) continue;
+
+            const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
+            const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
+                                         currentChapterMatch[0] === imageChapterMatch[0];
+
+            if (img.isConnected &&
+                managedElements.has(img) &&
+                img.naturalHeight > 0 &&
+                isFromCurrentChapter) {
+
+                const rect = img.getBoundingClientRect();
+                const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
+
+                if (isInViewport) {
+                    validImages.push({
+                        image: img,
+                        rect: rect,
+                        isInViewport: isInViewport,
+                        pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
+                    });
+                    existingImageElements.add(img);
+                }
+            }
+        }
+    }
+    // Sort by page number
+    validImages.sort((a, b) => a.pageNumber - b.pageNumber);
+    return validImages;
+}
 
     function checkServerStatus() {
         const serverUrl = UI.serverUrlInput.value.trim(); if (!serverUrl) return;
@@ -2423,9 +2728,7 @@ UI.globalAnkiButton.addEventListener('click', async () => {
         bindUIEvents();
         applyTheme();
         createMeasurementSpan();
-        logDebug("Initializing HYBRID engine with Focus Color (BlendMode). Hover Stability Patches Applied. Font Size Calculation Fix Applied. Site Matching Debug Included. OCR Error Resilience Added. Editable Text Boxes Enabled. Image Export Fix Applied. Blank Alt Attributes & Hide Numbered Container & Duplicate Punctuation Remover Enabled. Merge Selection Stability Fixed. Multi-Image Selector Added.");
-
-        setupBlankAltObservers();
+        logDebug("Initializing HYBRID engine. Mobile FAB Toggle and Confirmation Logic Added.");
 
         resizeObserver = new ResizeObserver(handleResize);
         intersectionObserver = new IntersectionObserver(handleIntersection, { rootMargin: '100px 0px' });
@@ -2455,11 +2758,13 @@ UI.globalAnkiButton.addEventListener('click', async () => {
 
         // NEW: Initialize mobile mode UI & apply class
         UI.mobileModeCheckbox.checked = settings.mobileMode;
+        UI.mobileEditMergingCheckbox.checked = settings.mobileEditMerging;
+
         document.body.classList.toggle('mobile-mode', settings.mobileMode);
 
-reinitializeScript();
-setupNavigationObserver();
-setupPageChangeDetection(); // ADD THIS LINE
+        reinitializeScript();
+        setupNavigationObserver();
+        setupPageChangeDetection();
 
         setInterval(() => {
             cleanupDisconnectedImages();
