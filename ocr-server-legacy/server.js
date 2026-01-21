@@ -1,4 +1,4 @@
-// server.js - V5.8 Mobile Optimized (Width 2500, Threshold 120)
+// server.js - V5.9 Mobile Optimized (Width 2500, Threshold 120, Serial Processing)
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
@@ -8,6 +8,12 @@ import fetch from 'node-fetch';
 import { program } from 'commander';
 import sharp from 'sharp';
 
+// --- FIX 1: Memory Optimization ---
+// Disable caching to prevent memory leaks in WASM environment
+sharp.cache(false);
+// Limit libvips concurrency to reduce thread overhead
+sharp.concurrency(1);
+
 const app = express();
 
 // --- Command-line Argument Parsing ---
@@ -16,7 +22,6 @@ program
     .option('--port <number>', 'Specify the server port to listen on', 3000)
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
     .option('--no-preprocess', 'Disable image preprocessing (upscaling and binarization)')
-    // UPDATED: Changed from target-height to target-width
     .option('--target-width <number>', 'Target width for upscaling (default: 2500)', 2500)
     .option('--threshold <number>', 'Binarization threshold 0-255 (default: 120)', 120)
     .parse(process.argv);
@@ -26,7 +31,6 @@ const host = options.ip;
 const port = options.port;
 const customCachePath = path.resolve(options.cachePath);
 const enablePreprocessing = options.preprocess !== false;
-// UPDATED: Use targetWidth
 const targetWidth = parseInt(options.targetWidth);
 const binarizeThreshold = parseInt(options.threshold);
 
@@ -36,6 +40,38 @@ const upload = multer({ dest: 'uploads/' });
 let ocrCache = new Map();
 let ocrRequestsProcessed = 0;
 let activeJobCount = 0;
+
+// --- FIX 2: Concurrency Control Queue ---
+// This queue ensures that heavy image operations happen one at a time
+class SerialQueue {
+    constructor() {
+        this.queue = [];
+        this.active = false;
+    }
+
+    add(fn) {
+        return new Promise((resolve, reject) => {
+            this.queue.push({ fn, resolve, reject });
+            this.next();
+        });
+    }
+
+    next() {
+        if (this.active || this.queue.length === 0) return;
+        this.active = true;
+        const { fn, resolve, reject } = this.queue.shift();
+        
+        fn()
+            .then(resolve)
+            .catch(reject)
+            .finally(() => {
+                this.active = false;
+                // Add a small delay to allow GC to run
+                setImmediate(() => this.next());
+            });
+    }
+}
+const processingQueue = new SerialQueue();
 
 // --- Auto-Merge Configuration ---
 const AUTO_MERGE_CONFIG = {
@@ -51,13 +87,6 @@ const AUTO_MERGE_CONFIG = {
 };
 
 // --- Image Preprocessing Functions ---
-
-/**
- * Optimized Preprocessing for Mobile:
- * 1. Resizes to 2500px WIDTH (fast/light).
- * 2. Applies Threshold 120 (high contrast).
- * 3. Compresses to WebP Q75 (tiny payload).
- */
 async function preprocessImage(imageBuffer, targetWidth, threshold) {
     let pipeline = sharp(imageBuffer);
     const metadata = await pipeline.metadata();
@@ -65,7 +94,6 @@ async function preprocessImage(imageBuffer, targetWidth, threshold) {
     let finalWidth = metadata.width;
     let finalHeight = metadata.height;
     
-    // Step 1: Resize based on Width (Lanczos2 for speed/quality balance)
     if (metadata.width !== targetWidth) {
         const scaleFactor = targetWidth / metadata.width;
         finalWidth = targetWidth;
@@ -77,7 +105,6 @@ async function preprocessImage(imageBuffer, targetWidth, threshold) {
         });
     }
     
-    // Step 2: Binarize -> Compress to WebP
     console.log(`[Preprocess] Resize to ${finalWidth}px Width (${finalHeight}px Height) -> Threshold ${threshold} -> WebP (Q75)`);
     
     pipeline = pipeline
@@ -245,7 +272,6 @@ function autoMergeOcrData(lines, naturalWidth, naturalHeight, config) {
 }
 
 // --- Utility Functions ---
-
 function loadCacheFromFile() {
     try {
         if (fs.existsSync(CACHE_FILE_PATH)) {
@@ -305,7 +331,6 @@ async function runChapterProcessingJob(baseUrl, authUser, authPass, context) {
 }
 
 // --- Middleware & Endpoints ---
-
 app.use(express.json());
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Origin', '*');
@@ -319,7 +344,7 @@ app.get('/', (req, res) => {
         requests_processed: ocrRequestsProcessed,
         items_in_cache: ocrCache.size, 
         active_preprocess_jobs: activeJobCount, 
-        preprocessing: { enabled: enablePreprocessing, width: targetWidth, format: 'WebP Q75' }
+        preprocessing: { enabled: enablePreprocessing, width: targetWidth, format: 'WebP Q75', strategy: 'Serial Queue' }
     });
 });
 
@@ -332,7 +357,8 @@ app.get('/ocr', async (req, res) => {
         return res.json(cachedEntry.data !== undefined ? cachedEntry.data : cachedEntry);
     }
     
-    console.log(`[OCR] [${context}] Processing: ${imageUrl}`);
+    console.log(`[OCR] [${context}] Queued: ${imageUrl}`);
+    
     try {
         const fetchOptions = {};
         if (authUser) {
@@ -342,29 +368,38 @@ app.get('/ocr', async (req, res) => {
 
         const response = await fetch(imageUrl, fetchOptions);
         if (!response.ok) throw new Error(`Failed to download: ${response.status}`);
-        let imageBuffer = Buffer.from(await response.arrayBuffer());
+        const originalBuffer = Buffer.from(await response.arrayBuffer());
 
-        let fullWidth, fullHeight;
-        if (enablePreprocessing) {
-            // UPDATED: Pass targetWidth instead of height
-            const preprocessed = await preprocessImage(imageBuffer, targetWidth, binarizeThreshold);
-            imageBuffer = preprocessed.buffer;
-            fullWidth = preprocessed.width;
-            fullHeight = preprocessed.height;
-        } else {
-            const image = sharp(imageBuffer);
-            const metadata = await image.metadata();
-            fullWidth = metadata.width;
-            fullHeight = metadata.height;
-        }
+        // --- Use Serial Queue for Processing ---
+        const { imageBuffer, fullWidth, fullHeight } = await processingQueue.add(async () => {
+            console.log(`[OCR] [${context}] Processing: ${imageUrl}`);
+            let imageBuffer;
+            let fullWidth, fullHeight;
+
+            if (enablePreprocessing) {
+                const preprocessed = await preprocessImage(originalBuffer, targetWidth, binarizeThreshold);
+                imageBuffer = preprocessed.buffer;
+                fullWidth = preprocessed.width;
+                fullHeight = preprocessed.height;
+            } else {
+                const image = sharp(originalBuffer);
+                const metadata = await image.metadata();
+                imageBuffer = originalBuffer;
+                fullWidth = metadata.width;
+                fullHeight = metadata.height;
+            }
+            return { imageBuffer, fullWidth, fullHeight };
+        });
+        
+        // --- End Serial Section ---
 
         let allFinalResults = [];
         const MAX_CHUNK_HEIGHT = 4000;
 
-        // Note: Even with Width resizing, if the resulting image is still extremely tall 
-        // (like a webtoon strip > 4000px height), this logic ensures it is chunked.
         if (fullHeight > MAX_CHUNK_HEIGHT) {
             console.log(`[OCR] [${context}] Tall image (${fullHeight}px). Chunking.`);
+            
+            // Re-instantiate sharp for chunking (lightweight compared to full pipeline)
             const image = sharp(imageBuffer);
             
             for (let yOffset = 0; yOffset < fullHeight; yOffset += MAX_CHUNK_HEIGHT) {
@@ -374,6 +409,7 @@ app.get('/ocr', async (req, res) => {
                 if (currentTop + chunkHeight > fullHeight) chunkHeight = fullHeight - currentTop;
                 if (chunkHeight <= 0) continue;
 
+                // Process chunk
                 const chunkBuffer = await image.clone().extract({ 
                     left: 0, 
                     top: currentTop, 
@@ -384,8 +420,7 @@ app.get('/ocr', async (req, res) => {
                 .toBuffer();
                 
                 const dataUrl = `data:image/webp;base64,${chunkBuffer.toString('base64')}`;
-
-                console.log(`[OCR] [${context}] Sending chunk y=${currentTop} (WebP)`);
+                console.log(`[OCR] [${context}] Sending chunk y=${currentTop}`);
                 const rawChunkResults = transformOcrData(await lens.scanByURL(dataUrl));
                 
                 let mergedChunkResults = rawChunkResults;
@@ -402,7 +437,6 @@ app.get('/ocr', async (req, res) => {
                 });
             }
         } else {
-            // Standard path
             const mimeType = enablePreprocessing ? 'image/webp' : 'image/png';
             const dataUrl = `data:${mimeType};base64,${imageBuffer.toString('base64')}`;
             
@@ -462,7 +496,7 @@ app.listen(port, host, (err) => {
     if (err) console.error('Error:', err);
     else {
         loadCacheFromFile();
-        console.log(`Local OCR Server V5.7 (Mobile Optimized) listening at http://${host}:${port}`);
-        if (enablePreprocessing) console.log(`Preprocessing: WebP (Q75) Output @ Width ${targetWidth}px | Threshold ${binarizeThreshold}`);
+        console.log(`Local OCR Server V5.9 (Mobile Optimized) listening at http://${host}:${port}`);
+        console.log(`Config: Max Concurrency=1 | Sharp Cache=Disabled | Width=${targetWidth}px`);
     }
 });
