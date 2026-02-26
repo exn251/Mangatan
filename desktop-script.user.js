@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining
 // @namespace    http://tampermonkey.net/
-// @version      24.6.04
-// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection.
-// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu
+// @version      24.6.09
+// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly.
+// @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu & Native Scroll Fix
 // @match        *://127.0.0.1*/*
 // @match        *://192.168.0.*/*
 // @match        *://suwayomi*/*
@@ -29,9 +29,9 @@
         imageServerPassword: '',
         ankiConnectUrl: 'http://127.0.0.1:8765',
         ankiImageField: 'Picture',
-        sites: [{
+        sites:[{
             urlPattern: '127.0.0.1',
-            imageContainerSelectors: [
+            imageContainerSelectors:[
                 'div.muiltr-masn8', 'div.muiltr-79elbk', 'div.muiltr-u43rde', 'div.muiltr-1r1or1s',
                 'div.muiltr-18sieki', 'div.muiltr-cns6dc', '.MuiBox-root.muiltr-1noqzsz', '.MuiBox-root.muiltr-1tapw32'
             ],
@@ -41,14 +41,14 @@
         debugMode: false, textOrientation: 'smart', interactionMode: 'hover', dimmedOpacity: 0.3,
         fontMultiplierHorizontal: 1.0, fontMultiplierVertical: 1.0, boundingBoxAdjustment: 5,
         focusScaleMultiplier: 1.1, soloHoverMode: true, deleteModifierKey: 'Alt',
-        mergeModifierKey: 'Control', addSpaceOnMerge: false, colorTheme: 'grey',
+        mergeModifierKey: 'Control', addSpaceOnMerge: false, colorTheme: 'white',
         brightnessMode: 'light', focusFontColor: 'black',
         // NEW: Mobile‑mode setting
         mobileMode: true,
         // NEW: Toggle for the Mobile FAB Menu
         mobileEditMerging: false
     };
-    let debugLog = [];
+    let debugLog =[];
     const SETTINGS_KEY = 'gemini_ocr_settings_v24_pc_focus_color_ocr_error_resilience_editable';
     const ocrDataCache = new WeakMap();
     const managedElements = new Map(), managedContainers = new Map(), attachedAttributeObservers = new WeakMap();
@@ -137,7 +137,7 @@ function cleanPunctuation(text) {
     return text;
 }
 
-    // --- [ROBUST] Navigation Handling & State Reset ---
+    // ---[ROBUST] Navigation Handling & State Reset ---
     function fullCleanupAndReset() {
         logDebug("NAVIGATION DETECTED: Starting full cleanup and reset.");
         if (animationFrameId !== null) { cancelAnimationFrame(animationFrameId); animationFrameId = null; }
@@ -166,7 +166,7 @@ function cleanPunctuation(text) {
     // NEW: Periodic cleanup of disconnected images
     function cleanupDisconnectedImages() {
         let cleaned = 0;
-        for (const [img, state] of managedElements.entries()) {
+        for (const[img, state] of managedElements.entries()) {
             if (!img.isConnected) {
                 if (state.overlay?.isConnected) state.overlay.remove();
                 if (state.hideTimer) clearTimeout(state.hideTimer);
@@ -413,7 +413,7 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     // Determine if this is a merged box (contains line breaks)
     const isMerged = ocrData.isMerged || text.includes('\u200B');
 
-    // ... [Keep your existing findBestFitSize and findBestFitSizeForMerged functions exactly as they are] ...
+    // ...[Keep your existing findBestFitSize and findBestFitSizeForMerged functions exactly as they are] ...
     const findBestFitSize = (isVerticalSearch) => {
         measurementSpan.style.writingMode = isVerticalSearch ? 'vertical-rl' : 'horizontal-tb';
         if (isMerged) {
@@ -791,7 +791,8 @@ function enterEditMode(textBox, sourceImage) {
         padding: textBox.style.padding,
         // NEW: Store display-related properties
         display: textBox.style.display,
-        wordWrap: textBox.style.wordWrap
+        wordWrap: textBox.style.wordWrap,
+        pointerEvents: textBox.style.pointerEvents
     };
 
     // Make the box editable using contenteditable
@@ -804,24 +805,25 @@ function enterEditMode(textBox, sourceImage) {
     textBox.textContent = editableState.originalText.replace(/\u200B/g, "\n");
 
     // Apply editing styles
-Object.assign(textBox.style, {
-    background: 'rgba(255, 255, 255, 0.95)',
-    color: '#000',
-    zIndex: '10000',
-    border: '2px solid #3498db',
-    borderRadius: '4px',
-    padding: '0px',
-    whiteSpace: 'pre', // CHANGED from 'pre-wrap'
-    textAlign: 'left',
-    overflow: 'auto',
-    overflowWrap: 'normal', // ADDED
-    wordWrap: 'normal', // ADDED
-    cursor: 'text',
-    outline: 'none',
-    resize: 'none',
-    minWidth: 'max-content', // ADDED
-    minHeight: 'max-content' // ADDED
-});
+    Object.assign(textBox.style, {
+        background: 'rgba(255, 255, 255, 0.95)',
+        color: '#000',
+        zIndex: '10000',
+        border: '2px solid #3498db',
+        borderRadius: '4px',
+        padding: '0px',
+        whiteSpace: 'pre',
+        textAlign: 'left',
+        overflow: 'auto',
+        overflowWrap: 'normal',
+        wordWrap: 'normal',
+        cursor: 'text',
+        outline: 'none',
+        resize: 'none',
+        minWidth: 'max-content',
+        minHeight: 'max-content',
+        pointerEvents: 'auto' // Crucial to override the mobile touch rule so keyboard opens
+    });
 
     // Focus and select all text
     textBox.focus();
@@ -958,7 +960,6 @@ function saveTextChanges(textBox, sourceImage, newText) {
 
 
 // ---------------------------------------------------------------------------
-
 function displayOcrResults(targetImg) {
     if (managedElements.has(targetImg)) return;
     const data = ocrDataCache.get(targetImg);
@@ -1000,8 +1001,9 @@ function displayOcrResults(targetImg) {
     const state = { overlay, lastWidth: 0, lastHeight: 0, image: targetImg, hideTimer: null };
     managedElements.set(targetImg, state);
 
-    // --- STABILITY FIX: Reworked hover logic ---
-    const handleMouseEnter = () => {
+    // --- INTERACTION LOGIC ---
+
+    const handleShow = () => {
         if (state.hideTimer) {
             clearTimeout(state.hideTimer);
             state.hideTimer = null;
@@ -1009,8 +1011,7 @@ function displayOcrResults(targetImg) {
         showOverlay(overlay, targetImg);
     };
 
-    // MERGE FIX: Updated mouseleave to prevent hiding during merge
-    const handleMouseLeave = () => {
+    const handleHide = () => {
         if (activeOverlay && activeOverlay !== overlay) return;
         state.hideTimer = setTimeout(() => {
             // Only hide if no merge anchor set and not editing
@@ -1018,55 +1019,30 @@ function displayOcrResults(targetImg) {
                 hideActiveOverlay();
             }
             state.hideTimer = null;
-        }, 300);
+        }, 500); // Increased timeout slightly for better mobile feel
     };
-
-    targetImg.addEventListener('mouseenter', handleMouseEnter);
-    overlay.addEventListener('mouseenter', handleMouseEnter);
-    targetImg.addEventListener('mouseleave', handleMouseLeave);
-    overlay.addEventListener('mouseleave', handleMouseLeave);
-
-    // Add double‑click event listener for editing
-    overlay.addEventListener('dblclick', (e) => {
-        const clickedBox = e.target.closest('.gemini-ocr-text-box');
-        if (clickedBox && !editableState.activeEditBox) {
-            e.stopPropagation();
-            enterEditMode(clickedBox, targetImg);
-        }
-    });
 
     // Helper to reset tool states
     const resetToolState = () => {
         toolState.isMergeMode = false;
         toolState.isEditMode = false;
-        // Update UI classes for FAB buttons
         if (UI.fabMerge) UI.fabMerge.classList.remove('active-mode');
         if (UI.fabEdit) UI.fabEdit.classList.remove('active-mode');
-        // Clear merge selection
         if (mergeState.anchorBox) {
              mergeState.anchorBox.classList.remove('selected-for-merge');
              mergeState.anchorBox = null;
         }
     };
 
-    // MERGE FIX: Enhanced click handler for better reliability
-    overlay.addEventListener('click', (e) => {
-        // If we're currently editing, don't process normal clicks
-        if (editableState.activeEditBox) return;
+    // Interaction Helpers extracted for use across both PC and Mobile click listeners
+    const cancelSelection = () => {
+        overlay.querySelectorAll('.manual-highlight, .selected-for-merge')
+            .forEach(b => b.classList.remove('manual-highlight', 'selected-for-merge'));
+        overlay.classList.remove('has-manual-highlight');
+        mergeState.anchorBox = null;
+    };
 
-        const clickedBox = e.target.closest('.gemini-ocr-text-box');
-        if (!clickedBox) {
-            // Click outside: Cancel merge
-            overlay.querySelectorAll('.manual-highlight, .selected-for-merge')
-                .forEach(b => b.classList.remove('manual-highlight', 'selected-for-merge'));
-            overlay.classList.remove('has-manual-highlight');
-            mergeState.anchorBox = null;
-            return;
-        }
-        e.stopPropagation();
-        e.preventDefault();
-
-        // Determine active modes (Key modifier OR toggle button)
+    const processBoxClick = (clickedBox, e) => {
         const isDelete = isModifierPressed(e, settings.deleteModifierKey);
         const isMerge = isModifierPressed(e, settings.mergeModifierKey) || toolState.isMergeMode;
         const isEdit = toolState.isEditMode;
@@ -1079,38 +1055,130 @@ function displayOcrResults(targetImg) {
                 clickedBox.classList.add('selected-for-merge');
                 logDebug('Merge anchor selected: ' + clickedBox.dataset.fullText);
             } else if (mergeState.anchorBox !== clickedBox) {
-                // If using the button toggle mode, ask for confirmation
                 if (toolState.isMergeMode) {
-                     clickedBox.classList.add('selected-for-merge'); // Highlight visually
-                     // Use setTimeout to allow the browser to render the highlight before alerting
+                     clickedBox.classList.add('selected-for-merge');
                      setTimeout(() => {
                         if (confirm("Merge these text boxes?")) {
                             handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
-                            logDebug('Merge completed (via mobile tool)');
-                            resetToolState(); // EXIT MERGE MODE AUTOMATICALLY
+                            resetToolState();
                         } else {
                             clickedBox.classList.remove('selected-for-merge');
-                            // We keep the anchor selected in case they want to pick a different box
                         }
                      }, 10);
                 } else {
-                    // PC Modifier key mode - standard behavior
                     handleBoxMerge(mergeState.anchorBox, clickedBox, targetImg, overlay);
-                    logDebug('Merge completed');
                 }
             } else {
                 clickedBox.classList.remove('selected-for-merge');
                 mergeState.anchorBox = null;
-                logDebug('Merge anchor deselected');
             }
         } else if (isEdit) {
-            // Single click edit mode
             enterEditMode(clickedBox, targetImg);
-            resetToolState(); // EXIT EDIT MODE AUTOMATICALLY
+            resetToolState();
         } else if (settings.interactionMode === 'click') {
             overlay.querySelectorAll('.manual-highlight').forEach(b => b.classList.remove('manual-highlight'));
             clickedBox.classList.add('manual-highlight');
             overlay.classList.add('has-manual-highlight');
+        }
+    };
+
+    // 1. Desktop Hover (Native events pass because pointer-events is auto on PC)
+    targetImg.addEventListener('mouseenter', handleShow);
+    targetImg.addEventListener('mouseleave', handleHide);
+    overlay.addEventListener('mouseenter', handleShow);
+    overlay.addEventListener('mouseleave', handleHide);
+
+// 2. PC Wheel Scrolling Fix
+    // Intercepts scroll commands on the overlay and manually forwards them to the underlying scroll container
+    overlay.addEventListener('wheel', (e) => {
+        if (editableState.activeEditBox) return; // Allow normal scroll inside edit box
+        e.preventDefault(); // Stop overlay from trapping scroll
+
+        // ---> ADJUST SCROLL SPEED HERE <---
+        // 1.0 is default browser speed. 2.0 is twice as fast. 0.5 is half as fast.
+        const scrollMultiplier = 0.85;
+
+        let scrollTarget = window;
+        let node = targetImg;
+
+        // Find deepest scrollable container for the image
+        while (node && node !== document.body && node !== document.documentElement) {
+            const style = window.getComputedStyle(node);
+            const canScrollY = node.scrollHeight > node.clientHeight && (style.overflowY === 'auto' || style.overflowY === 'scroll');
+            const canScrollX = node.scrollWidth > node.clientWidth && (style.overflowX === 'auto' || style.overflowX === 'scroll');
+
+            if (canScrollY || canScrollX) {
+                scrollTarget = node;
+                break;
+            }
+            node = node.parentNode;
+        }
+
+        // Apply the multiplier to the scroll distance
+        const moveX = e.deltaX * scrollMultiplier;
+        const moveY = e.deltaY * scrollMultiplier;
+
+        if (scrollTarget === window) {
+            window.scrollBy({ left: moveX, top: moveY });
+        } else {
+            scrollTarget.scrollBy({ left: moveX, top: moveY });
+        }
+    }, { passive: false });
+
+    // 3. PC Click / DblClick (Fires natively on the text box because pointer-events is auto)
+    overlay.addEventListener('click', (e) => {
+        if (editableState.activeEditBox) return;
+        const clickedBox = e.target.closest('.gemini-ocr-text-box');
+        if (!clickedBox) {
+            cancelSelection();
+            return;
+        }
+        e.stopPropagation();
+        e.preventDefault();
+        processBoxClick(clickedBox, e);
+    });
+
+    overlay.addEventListener('dblclick', (e) => {
+        if (editableState.activeEditBox) return;
+        const clickedBox = e.target.closest('.gemini-ocr-text-box');
+        if (clickedBox) {
+            e.stopPropagation();
+            enterEditMode(clickedBox, targetImg);
+        }
+    });
+
+    // 4. Mobile Show & Swiping Fix
+    // Triggers instantly for better UX
+    targetImg.addEventListener('touchstart', (e) => {
+        handleShow();
+    }, { passive: true });
+
+    // 5. Mobile Click (Fires natively on image because pointer-events is NONE on mobile text boxes)
+    targetImg.addEventListener('click', (e) => {
+        handleShow();
+        if (editableState.activeEditBox) return; // If editing, clicks fall through to auto-box
+
+        // If they click the image directly, we check if they actually meant to tap a box (Mobile fallback)
+        let clickedBox = null;
+        const boxes = overlay.querySelectorAll('.gemini-ocr-text-box');
+        const padding = 15; // Generous padding for touch targets
+
+        for (let i = 0; i < boxes.length; i++) {
+            const box = boxes[i];
+            const rect = box.getBoundingClientRect();
+            if (e.clientX >= rect.left - padding && e.clientX <= rect.right + padding &&
+                e.clientY >= rect.top - padding && e.clientY <= rect.bottom + padding) {
+                clickedBox = box;
+                break;
+            }
+        }
+
+        if (clickedBox) {
+            e.stopPropagation();
+            e.preventDefault();
+            processBoxClick(clickedBox, e);
+        } else {
+            cancelSelection();
         }
     });
 
@@ -1385,7 +1453,7 @@ function displayOcrResults(targetImg) {
             overlay.appendChild(cropBox);
 
             // Corner handles (larger for touch)
-            const corners = ['nw', 'ne', 'sw', 'se'];
+            const corners =['nw', 'ne', 'sw', 'se'];
             corners.forEach(corner => {
                 const handle = document.createElement('div');
                 Object.assign(handle.style, {
@@ -1842,7 +1910,7 @@ function applyTheme() {
             document.body.classList.add(`ocr-focus-color-mode-${settings.focusFontColor}`);
         }
 
-        // NEW: Apply mobile‑mode class
+        // Apply mobile‑mode class (for animation removal)
         document.body.classList.toggle('mobile-mode', settings.mobileMode);
     }
 
@@ -1891,7 +1959,6 @@ function createUI() {
         /* --- YOUR EXISTING OCR STYLES --- */
         .gemini-ocr-decoupled-overlay { position: fixed; z-index: 9998; pointer-events: none; opacity: 0; display: none; }
         .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
-        .gemini-ocr-decoupled-overlay.is-focused .gemini-ocr-text-box { pointer-events: auto; }
         ::selection { background-color: rgba(var(--accent), 1); color: #FFFFFF; }
         .gemini-ocr-text-box {
             position: absolute;
@@ -1910,9 +1977,17 @@ function createUI() {
             border-radius: 4px;
             border: none;
             text-shadow: none;
-            pointer-events: none;
+            pointer-events: auto; /* CRITICAL: Enables Yomitan and Editing on PC */
             min-height: 30px !important;
             min-width: 30px !important;
+        }
+
+       /* MODIFIED HYBRID TOUCH LOGIC: Allow Yomitan scanning while preserving scroll */
+        @media (hover: none) and (pointer: coarse) {
+            .gemini-ocr-text-box {
+                pointer-events: auto !important; /* Allows Yomitan to detect the text under your finger */
+                touch-action: pan-x pan-y !important; /* Explicitly tells the browser to keep native scrolling */
+            }
         }
 
         /* Ensure focused boxes can overflow properly */
@@ -1947,12 +2022,6 @@ function createUI() {
         .ocr-focus-color-mode-difference .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
         .ocr-focus-color-mode-difference .interaction-mode-click.is-focused .manual-highlight { color: white !important; mix-blend-mode: difference; background: transparent !important; box-shadow: none !important; }
         .gemini-ocr-text-vertical { writing-mode: vertical-rl; text-orientation: upright; }
-        .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-        .interaction-mode-click.is-focused .manual-highlight {
-            z-index: 1;
-            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
-            overflow: visible !important;
-        }
 
         .interaction-mode-hover.is-focused:not(.solo-hover-mode):has(.gemini-ocr-text-box:hover) .gemini-ocr-text-box:not(:hover),
         .interaction-mode-click.is-focused.has-manual-highlight .gemini-ocr-text-box:not(.manual-highlight) { opacity: var(--ocr-dimmed-opacity); }
@@ -1975,6 +2044,8 @@ function createUI() {
             cursor: text !important;
             min-width: max-content !important;
             min-height: max-content !important;
+            /* CRITICAL for mobile editing */
+            pointer-events: auto !important;
         }
         /* For vertical text in edit mode */
         .gemini-ocr-text-box.editing.gemini-ocr-text-vertical {
@@ -2218,11 +2289,6 @@ function createUI() {
             transition: none !important;
             animation: none !important;
         }
-        .mobile-mode .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
-        .mobile-mode .interaction-mode-click.is-focused .manual-highlight {
-            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
-            transition: none !important;
-        }
     `);
 
     document.body.insertAdjacentHTML('beforeend', `
@@ -2303,47 +2369,80 @@ function createUI() {
         </div>
     `);
 
-    // --- NEW: Ghost Text Logic for Suwayomi ---
+// --- NEW: Ghost Text Logic for Suwayomi ---
     // This finds Suwayomi's text elements and applies the ghost class so Yomitan ignores them.
-        function applyGhostTextToSuwayomi() {
-        // Target standard Suwayomi text containers (MuiTypography)
-        const textElements = document.querySelectorAll('.MuiTypography-root');
+    // NOW INCLUDES: Support for 'Exit to...' buttons and Android Alt-Wiper.
+    function applyGhostTextToSuwayomi() {
+        // CRITICAL CHECK: Only apply this logic if we are actually reading a chapter
+        const isChapterPage = /\/manga\/\d+\/chapter\/\d+/.test(window.location.href);
+
+        // 1. CLEANUP: If NOT on a chapter page, force remove all ghost effects immediately.
+        if (!isChapterPage) {
+            document.querySelectorAll('.yomitan-ghost-text').forEach(el => {
+                el.classList.remove('yomitan-ghost-text');
+                el.removeAttribute('data-text');
+            });
+            return;
+        }
+
+        // --- PART A: TEXT ELEMENTS (The Ghost Class Method) ---
+        const selectors =[
+            '.MuiTypography-root',      // Standard text
+            '.MuiButton-label',         // Old style Buttons
+            '.MuiButton-root',          // <--- NEW: Targets 'Exit to...' buttons
+            '.MuiChip-label',           // Chips/Tags
+            '.MuiListItemText-primary', // Sidebar text
+            '.MuiListItemText-secondary',
+            '.MuiTab-wrapper'           // Tabs
+        ];
+
+        const textElements = document.querySelectorAll(selectors.join(', '));
 
         textElements.forEach(el => {
-            // 1. Skip if already processed
-            if (el.classList.contains('yomitan-ghost-text')) return;
+            // EXCLUSION: Skip everything inside a Dialog (Settings, Popups, etc.)
+            if (el.closest('.MuiDialogContent-root')) return;
 
-            // 2. CRITICAL FIX: Skip elements that contain other HTML tags (like links or icons).
-            // We want to target the inner <a> tag directly, not the container <p>.
-            // If we ghost the container, the inner link becomes unclickable.
-            if (el.firstElementChild) return;
+            // Optimization: Skip if already correctly ghosted
+            if (el.classList.contains('yomitan-ghost-text')) {
+                if (el.innerText !== el.getAttribute('data-text')) {
+                    el.setAttribute('data-text', el.innerText);
+                }
+                return;
+            }
 
-            // 3. Only apply if there is actual text content
-            if (el.innerText.trim().length > 0) {
-                el.setAttribute('data-text', el.innerText);
-                el.classList.add('yomitan-ghost-text');
+            // STRICT CHECK: Leaf Nodes only
+            // We only apply this if the element contains JUST text (no icons, no inner spans)
+            // This prevents breaking complex buttons that contain layouts.
+            if (el.childElementCount > 0) return;
+
+            const text = el.innerText.trim();
+            if (text.length === 0) return;
+
+            el.setAttribute('data-text', text);
+            el.classList.add('yomitan-ghost-text');
+        });
+
+        // --- PART B: IMAGE ALT TEXT (The Aggressive Wipe Method) ---
+        // Continuously wipe alt text for Android support
+        const images = document.querySelectorAll('img');
+        images.forEach(img => {
+            if (img.hasAttribute('alt') && img.getAttribute('alt').length > 0) {
+                img.setAttribute('alt', '');
+                img.removeAttribute('alt');
             }
         });
     }
 
-    // Run immediately
-    applyGhostTextToSuwayomi();
-
-    // Run constantly via observer to catch new React renders (page changes, etc.)
-    const ghostObserver = new MutationObserver((mutations) => {
-        let shouldRun = false;
-        for (const m of mutations) {
-            if (m.type === 'childList' && m.addedNodes.length > 0) {
-                shouldRun = true;
-                break;
-            }
-        }
-        if (shouldRun) applyGhostTextToSuwayomi();
-    });
-
-    // Observe the root app container
+    // A. Observer: Catches immediate DOM changes
+    const ghostObserver = new MutationObserver(() => applyGhostTextToSuwayomi());
     const appRoot = document.getElementById('root') || document.body;
     ghostObserver.observe(appRoot, { childList: true, subtree: true });
+
+    // B. Poller: The "Strict" enforcer (Runs every 1s)
+    setInterval(applyGhostTextToSuwayomi, 1000);
+
+    // C. Initial Run
+    applyGhostTextToSuwayomi();
 }
 
     // Abstracted Anki Export Function for reuse
@@ -2603,7 +2702,7 @@ function createUI() {
 // ENHANCED: Get valid images with fallback to visible images
 function getValidImagesForExport() {
     const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
-    const validImages = [];
+    const validImages =[];
 
     // First, check recently hovered images
     for (const img of recentlyHoveredImages) {
@@ -2754,7 +2853,7 @@ function getValidImagesForExport() {
         UI.fontMultiplierVerticalInput.value = settings.fontMultiplierVertical;
         UI.boundingBoxAdjustmentInput.value = settings.boundingBoxAdjustment;
         UI.focusScaleMultiplierInput.value = settings.focusScaleMultiplier;
-        UI.sitesConfigTextarea.value = settings.sites.map(s => [s.urlPattern, s.overflowFixSelector, ...(s.imageContainerSelectors || []), s.contentRootSelector].join('; ')).join('\n');
+        UI.sitesConfigTextarea.value = settings.sites.map(s =>[s.urlPattern, s.overflowFixSelector, ...(s.imageContainerSelectors || []), s.contentRootSelector].join('; ')).join('\n');
 
         // NEW: Initialize mobile mode UI & apply class
         UI.mobileModeCheckbox.checked = settings.mobileMode;
