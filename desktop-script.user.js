@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining
 // @namespace    http://tampermonkey.net/
-// @version      24.6.09
+// @version      24.6.10
 // @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly.
 // @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu & Native Scroll Fix
-// @match        *://127.0.0.1*/*
-// @match        *://192.168.0.*/*
+// @match        *://127.0.0.*/*
+// @match        *://192.168.0.1*/*
 // @match        *://suwayomi*/*
 // @exclude      *://suwayomi.org/*
 // @exclude      *://github.com/*
@@ -60,6 +60,7 @@
     const toolState = {
         isMergeMode: false,
         isEditMode: false,
+        isDeleteMode: false,
         isMenuOpen: false
     };
 
@@ -1026,8 +1027,10 @@ function displayOcrResults(targetImg) {
     const resetToolState = () => {
         toolState.isMergeMode = false;
         toolState.isEditMode = false;
+        toolState.isDeleteMode = false;
         if (UI.fabMerge) UI.fabMerge.classList.remove('active-mode');
         if (UI.fabEdit) UI.fabEdit.classList.remove('active-mode');
+        if (UI.fabDelete) UI.fabDelete.classList.remove('active-mode');
         if (mergeState.anchorBox) {
              mergeState.anchorBox.classList.remove('selected-for-merge');
              mergeState.anchorBox = null;
@@ -1043,12 +1046,24 @@ function displayOcrResults(targetImg) {
     };
 
     const processBoxClick = (clickedBox, e) => {
-        const isDelete = isModifierPressed(e, settings.deleteModifierKey);
+        const isDelete = isModifierPressed(e, settings.deleteModifierKey) || toolState.isDeleteMode;
         const isMerge = isModifierPressed(e, settings.mergeModifierKey) || toolState.isMergeMode;
         const isEdit = toolState.isEditMode;
 
         if (isDelete) {
-            handleBoxDelete(clickedBox, targetImg);
+            if (toolState.isDeleteMode) {
+                clickedBox.classList.add('selected-for-merge');
+                setTimeout(() => {
+                    if (confirm("Delete this text box?")) {
+                        handleBoxDelete(clickedBox, targetImg);
+                        resetToolState();
+                    } else {
+                        clickedBox.classList.remove('selected-for-merge');
+                    }
+                }, 10);
+            } else {
+                handleBoxDelete(clickedBox, targetImg);
+            }
         } else if (isMerge) {
             if (!mergeState.anchorBox) {
                 mergeState.anchorBox = clickedBox;
@@ -2297,6 +2312,7 @@ function createUI() {
             <button id="gemini-ocr-fab-main" class="gemini-ocr-fab-btn" title="Menu">➕</button>
 
             <!-- Child Buttons -->
+            <button id="gemini-ocr-fab-delete" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Delete Mode (Click a box)">🗑️</button>
             <button id="gemini-ocr-fab-edit" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Edit Mode (Single Click)">✏️</button>
             <button id="gemini-ocr-fab-merge" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Merge Mode (Click 2 boxes)">🔗</button>
             <button id="gemini-ocr-fab-anki" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Export Screenshot to Anki">⛏️</button>
@@ -2512,6 +2528,7 @@ function createUI() {
             // FAB Buttons
             fabContainer: document.getElementById('gemini-ocr-fab-container'),
             fabMain: document.getElementById('gemini-ocr-fab-main'),
+            fabDelete: document.getElementById('gemini-ocr-fab-delete'),
             fabEdit: document.getElementById('gemini-ocr-fab-edit'),
             fabMerge: document.getElementById('gemini-ocr-fab-merge'),
             fabAnki: document.getElementById('gemini-ocr-fab-anki'),
@@ -2562,12 +2579,30 @@ function createUI() {
                 UI.fabContainer.classList.toggle('is-open', toolState.isMenuOpen);
             });
 
+            UI.fabDelete.addEventListener('click', () => {
+                toolState.isDeleteMode = !toolState.isDeleteMode;
+                // Exclusive modes
+                if (toolState.isDeleteMode) {
+                    toolState.isMergeMode = false;
+                    toolState.isEditMode = false;
+                    UI.fabMerge.classList.remove('active-mode');
+                    UI.fabEdit.classList.remove('active-mode');
+                }
+                UI.fabDelete.classList.toggle('active-mode', toolState.isDeleteMode);
+
+                // Close menu on click
+                toolState.isMenuOpen = false;
+                UI.fabContainer.classList.remove('is-open');
+            });
+
             UI.fabEdit.addEventListener('click', () => {
                 toolState.isEditMode = !toolState.isEditMode;
                 // Exclusive modes
                 if (toolState.isEditMode) {
                     toolState.isMergeMode = false;
+                    toolState.isDeleteMode = false;
                     UI.fabMerge.classList.remove('active-mode');
+                    UI.fabDelete.classList.remove('active-mode');
                 }
                 UI.fabEdit.classList.toggle('active-mode', toolState.isEditMode);
 
@@ -2581,7 +2616,9 @@ function createUI() {
                 // Exclusive modes
                 if (toolState.isMergeMode) {
                     toolState.isEditMode = false;
+                    toolState.isDeleteMode = false;
                     UI.fabEdit.classList.remove('active-mode');
+                    UI.fabDelete.classList.remove('active-mode');
                 } else {
                     // Reset if turning off
                     if (mergeState.anchorBox) {
@@ -2607,6 +2644,7 @@ function createUI() {
         } else {
             // Mode B: Simple Direct Anki Export (Default)
             // Hide the child buttons permanently
+            UI.fabDelete.style.display = 'none';
             UI.fabEdit.style.display = 'none';
             UI.fabMerge.style.display = 'none';
             UI.fabAnki.style.display = 'none';
