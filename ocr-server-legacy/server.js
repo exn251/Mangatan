@@ -1,4 +1,4 @@
-// server.js - V5.2 With Sharp Instance Cloning Fix for Chunking
+// server.js - V5.3 With Sharp Instance Cloning Fix for Chunking
 import express from 'express';
 import LensCore from 'chrome-lens-ocr/src/core.js';
 import fs from 'node:fs';
@@ -14,7 +14,7 @@ const app = express();
 
 // --- Command-line Argument Parsing ---
 program
-    .option('--ip <string>', 'Specify the server IP address to bind to', '127.0.0.1')
+    .option('--ip <string>', 'Specify the server IP address to bind to', '0.0.0.0')
     .option('--port <number>', 'Specify the server port to listen on', 3000)
     .option('--cache-path <string>', 'Specify a custom path for the cache file', process.cwd())
     .parse(process.argv);
