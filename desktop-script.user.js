@@ -1,11 +1,11 @@
 // ==UserScript==
-// @name         Mangatan - Better Text Boxes & Mining
+// @name         Mangatan - Better Text Boxes & Mining - Refractored
 // @namespace    http://tampermonkey.net/
-// @version      24.6.10
-// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly.
+// @version      24.6.11
+// @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly. Performance improvements included.
 // @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu & Native Scroll Fix
-// @match        *://127.0.0.*/*
-// @match        *://192.168.0.1*/*
+// @match        *://127.0.0.1:4567/*
+// @match        *://localhost:4567/*
 // @match        *://suwayomi*/*
 // @exclude      *://suwayomi.org/*
 // @exclude      *://github.com/*
@@ -14,7 +14,6 @@
 // @grant        GM_addStyle
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
-// @connect      192.168.0.
 // @connect      localhost
 // @downloadURL  https://github.com/exn251/Mangatan/raw/refs/heads/main/desktop-script.user.js
 // @updateURL    https://github.com/exn251/Mangatan/raw/refs/heads/main/desktop-script.user.js
@@ -23,19 +22,26 @@
 (function () {
     'use strict';
     // --- Global State and Settings ---
-    let settings = {
+let settings = {
         ocrServerUrl: 'http://127.0.0.1:3000',
         imageServerUser: '',
         imageServerPassword: '',
         ankiConnectUrl: 'http://127.0.0.1:8765',
         ankiImageField: 'Picture',
         sites:[{
-            urlPattern: '127.0.0.1',
+            urlPattern: '127.0.0.1', // You might want to remove this or make it regex if targeting multiple IPs
             imageContainerSelectors:[
-                'div.muiltr-masn8', 'div.muiltr-79elbk', 'div.muiltr-u43rde', 'div.muiltr-1r1or1s',
-                'div.muiltr-18sieki', 'div.muiltr-cns6dc', '.MuiBox-root.muiltr-1noqzsz', '.MuiBox-root.muiltr-1tapw32'
+                // Option 1 (Best): Targets the images directly based on the API URL structure
+                'img[src*="/api/v1/manga/"][src*="/page/"]',
+
+                // Option 2: If your script specifically needs the parent DIV *wrapping* the images
+                'div:has(> img[src*="/api/v1/manga/"])',
+
+                // Option 3: Fallback using the distinct attributes seen in your screenshot
+                'img[draggable="false"][crossorigin="anonymous"]'
             ],
-            overflowFixSelector: '.MuiBox-root.muiltr-13djdhf',
+            // You should also update this overflow fix to avoid MUI classes
+            overflowFixSelector: '#root div:has(> div > div > img[src*="/api/v1/manga/"])',
             contentRootSelector: '#root'
         }],
         debugMode: false, textOrientation: 'smart', interactionMode: 'hover', dimmedOpacity: 0.3,
@@ -87,7 +93,6 @@
         originalStyles: null
     };
 
-    // --- OCR Duplicate Punctuation Remover Functionality ---
     const punctuationConfig = {
         originalSetAttribute: null,
         originalSetTextContent: null
@@ -101,41 +106,27 @@
         document.dispatchEvent(new CustomEvent('ocr-log-update'));
     };
 
-// --- OCR Duplicate Punctuation Remover Functions ---
+// --- [OPTIMIZED] OCR Duplicate Punctuation Remover Functions ---
 function cleanPunctuation(text) {
     if (!text) return text;
 
-    // Replace consecutive duplicates of ? or ! and other text
-    text = text.replace(/[ ]*!!+/g, '‼');
-    text = text.replace(/[ ]*\?\?+/g, '⁇');
-    text = text.replace(/[ ]*\.\.+/g, '\u2026');
-    text = text.replace(/[ ]*(!\?)+/g, '⁉');
-    text = text.replace(/[ ]*(\?!)+/g, '⁈');
-    text = text.replace(/[ ]*\u2026+/g, '\u2026');
-    text = text.replace(/[ ]*\u30FB\u30FB+/g, '\u2026');
-    text = text.replace(/[ ]*\uFF65\uFF65+/g, '\u2026');
-
-    // Replace 2 or more MIDDLE DOT (U+00B7) with ellipsis
-    text = text.replace(/[ ]*\u00B7\u00B7+/g, '\u2026');
-
-    // Replace one or more hyphens with prolonged sound mark
-    text = text.replace(/[ ]*-+/g, '\u30FC');
-
-    // Replace one or more EN DASH with HORIZONTAL BAR
-    text = text.replace(/[ ]*\u2013+/g, '\u2015');
-
-    // Replace colon with ellipsis
-    text = text.replace(/[ ]*:+[ ]*/g, '\u2026');
-
-    // Clean up any leftover single ? or ! or : that might remain after mixed sequences
-    text = text.replace(/^[!?:]+$/g, ''); // Remove if entire string is just !, ? or :
-    text = text.replace(/([⁉⁈‼⁇])[!?:]+/g, '$1'); // Remove any !, ? or : after special punctuation
-    text = text.replace(/[!?:]+([⁉⁈‼⁇])/g, '$1'); // Remove any !, ? or : before special punctuation
-
-    // Remove only U+0020 spaces (not other whitespace)
-    text = text.replace(/\u0020/g, '');
-
-    return text;
+    // Chaining regexes avoids reallocating intermediate strings.
+    return text
+        .replace(/[ ]*!!+/g, '‼')
+        .replace(/[ ]*\?\?+/g, '⁇')
+        .replace(/[ ]*\.\.+/g, '\u2026')
+        .replace(/[ ]*(!\?)+/g, '⁉')
+        .replace(/[ ]*(\?!)+/g, '⁈')
+        .replace(/[ ]*\u2026+/g, '\u2026')
+        .replace(/[ ]*[\u30FB\uFF65]{2,}/g, '\u2026') // Grouped mid-dots
+        .replace(/[ ]*\u00B7{2,}/g, '\u2026')
+        .replace(/[ ]*-+/g, '\u30FC')
+        .replace(/[ ]*\u2013+/g, '\u2015')
+        .replace(/[ ]*:+[ ]*/g, '\u2026')
+        .replace(/^[!?:]+$/g, '')
+        .replace(/([⁉⁈‼⁇])[!?:]+/g, '$1')
+        .replace(/[!?:]+([⁉⁈‼⁇])/g, '$1')
+        .replace(/\u0020/g, '');
 }
 
     // ---[ROBUST] Navigation Handling & State Reset ---
@@ -183,6 +174,9 @@ function cleanPunctuation(text) {
         }
     }
 
+    // Memory Leak Patch: actually execute the garbage collector every 10 seconds.
+    setInterval(cleanupDisconnectedImages, 10000);
+
     function reinitializeScript() { logDebug("Re-initializing scanners."); activateScanner(); observeChapters(); }
     function setupNavigationObserver() {
         const contentRootSelector = activeSiteConfig?.contentRootSelector;
@@ -208,14 +202,12 @@ function setupPageChangeDetection() {
     setInterval(() => {
         const currentVisibleImageSrcs = new Set();
 
-        // Collect currently visible image sources
         for (const img of visibleImages) {
             if (img.isConnected && img.src) {
                 currentVisibleImageSrcs.add(img.src);
             }
         }
 
-        // If images completely changed, it's a page turn
         if (lastVisibleImageSrcs.size > 0 && currentVisibleImageSrcs.size > 0) {
             const hasOverlap = [...currentVisibleImageSrcs].some(src =>
                 lastVisibleImageSrcs.has(src)
@@ -232,17 +224,28 @@ function setupPageChangeDetection() {
     }, 2000);
 }
 
-    // --- Hybrid Render Engine Core ---
+    // --- [OPTIMIZED] Hybrid Render Engine Core ---
     function updateVisibleOverlaysPosition() {
         for (const img of visibleImages) {
             const state = managedElements.get(img);
             if (state?.overlay.isConnected) {
                 const rect = img.getBoundingClientRect();
-                Object.assign(state.overlay.style, { top: `${rect.top}px`, left: `${rect.left}px` });
+
+                // PERFORMANCE FIX: Only touch the DOM if coordinates actually changed
+                // Protects against 60-144 calls per second layout thrashing when idle
+                if (Math.abs((state.lastTop || 0) - rect.top) > 0.5 ||
+                    Math.abs((state.lastLeft || 0) - rect.left) > 0.5) {
+
+                    state.overlay.style.top = `${rect.top}px`;
+                    state.overlay.style.left = `${rect.left}px`;
+                    state.lastTop = rect.top;
+                    state.lastLeft = rect.left;
+                }
             }
         }
         animationFrameId = requestAnimationFrame(updateVisibleOverlaysPosition);
     }
+
     function updateOverlayDimensionsAndStyles(img, state, rect = null) {
         if (!rect) rect = img.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
@@ -348,13 +351,18 @@ function setupPageChangeDetection() {
         const doProcess = () => { img.crossOrigin = "anonymous"; processImage(img, img.src); };
         if (img.complete && img.naturalHeight > 0) doProcess(); else img.addEventListener('load', doProcess, { once: true });
     }
-    function processImage(img, sourceUrl) {
-        if (ocrDataCache.has(img)) { displayOcrResults(img); return; }
-        logDebug(`Requesting OCR for ...${sourceUrl.slice(-30)}`);
-        ocrDataCache.set(img, 'pending');
-        const context = document.title;
-        let ocrRequestUrl = `${settings.ocrServerUrl}/ocr?url=${encodeURIComponent(sourceUrl)}&context=${encodeURIComponent(context)}`;
-        if (settings.imageServerUser) ocrRequestUrl += `&user=${encodeURIComponent(settings.imageServerUser)}&pass=${encodeURIComponent(settings.imageServerPassword)}`;
+function processImage(img, sourceUrl) {
+    if (ocrDataCache.has(img)) { displayOcrResults(img); return; }
+
+    // Normalize URL: strip query params so pre-processed and live-loaded
+    // pages share the same server-side cache key (e.g. page/0?sourceId=0 → page/0)
+    const normalizedUrl = sourceUrl.split('?')[0];
+
+    logDebug(`Requesting OCR for ...${normalizedUrl.slice(-30)}`);
+    ocrDataCache.set(img, 'pending');
+    const context = document.title;
+    let ocrRequestUrl = `${settings.ocrServerUrl}/ocr?url=${encodeURIComponent(normalizedUrl)}&context=${encodeURIComponent(context)}`;
+    if (settings.imageServerUser) ocrRequestUrl += `&user=${encodeURIComponent(settings.imageServerUser)}&pass=${encodeURIComponent(settings.imageServerPassword)}`;
         GM_xmlhttpRequest({
             method: 'GET', url: ocrRequestUrl, timeout: 45000,
             onload: (res) => {
@@ -391,96 +399,52 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     if (!measurementSpan || !box || !imgRect || imgRect.width === 0 || imgRect.height === 0) return;
     const ocrData = box._ocrData, text = ocrData.text || '';
 
-    // --- STABILITY FIX: Reset box to original OCR dimensions before measuring ---
-    // This prevents the box from "drifting" or getting permanently stuck at a larger size
-    // after a resize event or if the Minimum Font logic previously expanded it.
+    // Reset Box layout to OCR dimensions
     box.style.width = `${ocrData.tightBoundingBox.width * 100}%`;
     box.style.height = `${ocrData.tightBoundingBox.height * 100}%`;
-    box.style.left = `${ocrData.tightBoundingBox.left * 100}%`; // Ensure position is reset too if you use left/top
-    // Note: If your OCR data uses 'x' and 'y', use those:
     box.style.left = `${ocrData.tightBoundingBox.x * 100}%`;
     box.style.top = `${ocrData.tightBoundingBox.y * 100}%`;
-    // --------------------------------------------------------------------------
 
-    // Use adjusted dimensions for fitting calculations with **100%** target usage
-    // We must read offsetWidth AFTER resetting the percentage styles above.
     const availableWidth = (box.offsetWidth + settings.boundingBoxAdjustment) * 1.00;
     const availableHeight = (box.offsetHeight + settings.boundingBoxAdjustment) * 1.00;
 
     if (!text || availableWidth <= 0 || availableHeight <= 0) return;
 
     const MINIMUM_FONT_SIZE = 24;
-
-    // Determine if this is a merged box (contains line breaks)
     const isMerged = ocrData.isMerged || text.includes('\u200B');
 
-    // ...[Keep your existing findBestFitSize and findBestFitSizeForMerged functions exactly as they are] ...
-    const findBestFitSize = (isVerticalSearch) => {
+    // PERFORMANCE FIX: Find perfect font sizes using Mathematical Linear Scaling O(1)
+    // Avoids forcing the browser to recalculate element layout hundreds of times via binary search
+    const findBestFitSizeMath = (isVerticalSearch) => {
         measurementSpan.style.writingMode = isVerticalSearch ? 'vertical-rl' : 'horizontal-tb';
+        measurementSpan.style.whiteSpace = isMerged ? 'pre' : 'normal';
+
         if (isMerged) {
-            measurementSpan.style.whiteSpace = 'pre';
             measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
         } else {
-            measurementSpan.style.whiteSpace = 'normal';
             measurementSpan.textContent = text;
-            measurementSpan.innerHTML = '';
-            measurementSpan.appendChild(document.createTextNode(text));
         }
 
-        let low = 1, high = 200, bestSize = 1;
-        while (low <= high) {
-            const mid = Math.floor((low + high) / 2);
-            if (mid <= 0) break;
-            measurementSpan.style.fontSize = `${mid}px`;
-            // Optimization: checking offset dimensions causes reflow.
-            // There is no way around this in vanilla JS without canvas,
-            // but the Caching logic in the parent function mitigates the cost.
-            if (measurementSpan.offsetWidth <= availableWidth && measurementSpan.offsetHeight <= availableHeight) {
-                bestSize = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-        return bestSize;
+        // Setup base mathematical ratio
+        const baseFontSize = 50;
+        measurementSpan.style.fontSize = `${baseFontSize}px`;
+
+        const mw = measurementSpan.offsetWidth;
+        const mh = measurementSpan.offsetHeight;
+
+        if (mw === 0 || mh === 0) return 1;
+
+        // Calculate Scale
+        const scaleW = availableWidth / mw;
+        const scaleH = availableHeight / mh;
+        const scale = Math.min(scaleW, scaleH);
+
+        // Clamp output safely inside 1-200 bounds
+        return Math.max(1, Math.min(Math.floor(baseFontSize * scale), 200));
     };
 
-    const findBestFitSizeForMerged = (isVerticalSearch) => {
-        measurementSpan.style.writingMode = isVerticalSearch ? 'vertical-rl' : 'horizontal-tb';
-        measurementSpan.style.whiteSpace = 'pre';
-        measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
-
-        let low = 1, high = 200, bestSize = 1;
-        while (low <= high) {
-            const mid = Math.floor((low + high) / 2);
-            if (mid <= 0) break;
-            measurementSpan.style.fontSize = `${mid}px`;
-
-            const mw = measurementSpan.offsetWidth;
-            const mh = measurementSpan.offsetHeight;
-            const fitsWidth = mw <= availableWidth;
-            const fitsHeight = mh <= availableHeight;
-
-            let linesFit = true;
-            if (fitsWidth && fitsHeight) {
-                const lineBreaks = text.split('\u200B').length;
-                if ((mw / Math.max(1, text.length / Math.max(1, lineBreaks))) * (text.length / Math.max(1, lineBreaks)) > availableWidth * 1.1) {
-                    linesFit = false;
-                }
-            }
-
-            if (fitsWidth && fitsHeight && linesFit) {
-                bestSize = mid;
-                low = mid + 1;
-            } else {
-                high = mid - 1;
-            }
-        }
-        return bestSize;
-    };
-
-    const horizontalFitSize = isMerged ? findBestFitSizeForMerged(false) : findBestFitSize(false);
-    const verticalFitSize   = isMerged ? findBestFitSizeForMerged(true)  : findBestFitSize(true);
+    const horizontalFitSize = findBestFitSizeMath(false);
+    const verticalFitSize   = findBestFitSizeMath(true);
 
     // Choose orientation based on settings / computed sizes
     let finalFontSize = 0, isVertical = false;
@@ -501,7 +465,7 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
         finalFontSize = isVertical ? verticalFitSize : horizontalFitSize;
     }
 
-    // --- NEW: ADJUST BOX SIZE IF MINIMUM FONT SIZE REQUIRES IT ---
+    // ADJUST BOX SIZE IF MINIMUM FONT SIZE REQUIRES IT
     const multiplier = isVertical ? settings.fontMultiplierVertical : settings.fontMultiplierHorizontal;
     const requiredFontSize = Math.max(finalFontSize, MINIMUM_FONT_SIZE);
 
@@ -521,7 +485,6 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
         const scaledRequiredHeight = measurementSpan.offsetHeight * 1.1;
 
         if (imgRect.width > 0 && imgRect.height > 0) {
-            // Get CURRENT percentages (which we reset at the top of the function)
             const currentWidthPercent = parseFloat(box.style.width);
             const currentHeightPercent = parseFloat(box.style.height);
 
@@ -538,7 +501,6 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
 
                 box.style.width = `${newWidth}%`;
                 box.style.height = `${newHeight}%`;
-                // Ensure we don't go negative or off screen logic could be added here
                 box.style.left = `${parseFloat(box.style.left) - widthAdjustment}%`;
                 box.style.top = `${parseFloat(box.style.top) - heightAdjustment}%`;
             }
@@ -564,11 +526,7 @@ function calculateAndApplyOptimalStyles_Optimized(overlay, imgRect) {
     if (!measurementSpan || imgRect.width === 0 || imgRect.height === 0) return;
 
     // --- OPTIMIZATION START: Cache Check ---
-    // Create a unique key based on the image dimensions
     const dimensionKey = `${Math.round(imgRect.width)}x${Math.round(imgRect.height)}`;
-
-    // If we have already calculated for these exact dimensions, stop here.
-    // This eliminates the lag on repeat hovers.
     if (overlay._lastCalcDimensions === dimensionKey && !overlay._forceRecalc) {
         return;
     }
@@ -590,7 +548,6 @@ function calculateAndApplyOptimalStyles_Optimized(overlay, imgRect) {
 
     measurementSpan.style.writingMode = 'horizontal-tb';
 
-    // Save the dimensions we just calculated for
     overlay._lastCalcDimensions = dimensionKey;
     overlay._forceRecalc = false;
 }
@@ -605,13 +562,10 @@ function showOverlay(overlay, image) {
     const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
     const imageChapterMatch   = image.src.match(/\/manga\/\d+\/chapter\/\d+/);
 
-    // Only set if the image is from the current chapter
     if (currentChapterMatch && imageChapterMatch && currentChapterMatch[0] === imageChapterMatch[0]) {
         activeImageForExport = image;
 
-        // NEW: Add to recently hovered images
         recentlyHoveredImages.add(image);
-        // Keep only the most recent images
         if (recentlyHoveredImages.size > MAX_RECENT_IMAGES) {
             const firstImage = recentlyHoveredImages.values().next().value;
             recentlyHoveredImages.delete(firstImage);
@@ -624,7 +578,6 @@ function showOverlay(overlay, image) {
 
     overlay.classList.add('is-focused');
 
-    // MERGE FIX: Re‑apply selected class if anchor exists for this overlay
     if (mergeState.anchorBox && overlay.contains(mergeState.anchorBox)) {
         mergeState.anchorBox.classList.add('selected-for-merge');
     }
@@ -669,12 +622,10 @@ function handleBoxDelete(boxElement, sourceImage) {
     ocrDataCache.set(sourceImage, updatedData);
     boxElement.remove();
 
-    // MERGE FIX: If deleted was anchor, clear state
     if (mergeState.anchorBox === boxElement) {
         mergeState.anchorBox = null;
     }
 
-    // Sync changes to server
     syncCacheToServer(sourceImage).then(success => {
         if (!success) {
             logDebug("Warning: Failed to sync deletion to server cache");
@@ -685,7 +636,6 @@ function handleBoxDelete(boxElement, sourceImage) {
 // ---------------------------------------------------------------------------
 
 function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
-    // Get the text from the dataset which preserves the original formatting
     const targetText = targetBox.dataset.fullText || targetBox.textContent;
     const sourceText = sourceBox.dataset.fullText || sourceBox.textContent;
 
@@ -695,7 +645,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
     const targetData = targetBox._ocrData;
     const sourceData = sourceBox._ocrData;
 
-    // Use the text from dataset which preserves line breaks
     let combinedText = targetText + (settings.addSpaceOnMerge ? ' ' : "\u200B") + sourceText;
 
     const tb = targetData.tightBoundingBox;
@@ -727,7 +676,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
     const newBoxElement = document.createElement('div');
     newBoxElement.className = 'gemini-ocr-text-box';
 
-    // Apply punctuation cleaning to the new merged text
     const displayText = combinedText.replace(/\u200B/g, "\n");
     newBoxElement.textContent = displayText;
     newBoxElement.dataset.fullText = combinedText;
@@ -735,7 +683,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
     newBoxElement._ocrData = newOcrItem;
     newBoxElement._ocrDataIndex = newData.length - 1;
 
-    // *** CONSISTENT STYLES *** (merged → pre / start, non‑merged → nowrap / center)
     newBoxElement.style.whiteSpace = 'pre';
     newBoxElement.style.textAlign = 'start';
 
@@ -746,20 +693,16 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
         height: `${newOcrItem.tightBoundingBox.height * 100}%`
     });
     overlay.appendChild(newBoxElement);
-    // ADD THIS: Force recalculation next time, or calculate immediately
-    overlay._forceRecalc = true; // Invalidate cache
+    overlay._forceRecalc = true;
     calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
     calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
 
-    // Exit merging mode
     mergeState.anchorBox = null;
     overlay.classList.remove('merging');
 
-    // Remove selected‑for‑merge class from any remaining boxes
     document.querySelectorAll('.gemini-ocr-text-box.selected-for-merge')
         .forEach(box => box.classList.remove('selected-for-merge'));
 
-    // Sync changes to server
     syncCacheToServer(sourceImage).then(success => {
         if (!success) {
             logDebug("Warning: Failed to sync merge changes to server cache");
@@ -772,7 +715,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
 function enterEditMode(textBox, sourceImage) {
     if (editableState.activeEditBox) return;
 
-    // MERGE FIX: Exit merge mode if editing
     if (mergeState.anchorBox) {
         mergeState.anchorBox.classList.remove('selected-for-merge');
         mergeState.anchorBox = null;
@@ -781,7 +723,6 @@ function enterEditMode(textBox, sourceImage) {
     editableState.activeEditBox = textBox;
     editableState.originalText = textBox.dataset.fullText;
 
-    // Store original styles
     editableState.originalStyles = {
         background: textBox.style.background,
         color: textBox.style.color,
@@ -790,22 +731,17 @@ function enterEditMode(textBox, sourceImage) {
         textAlign: textBox.style.textAlign,
         overflow: textBox.style.overflow,
         padding: textBox.style.padding,
-        // NEW: Store display-related properties
         display: textBox.style.display,
         wordWrap: textBox.style.wordWrap,
         pointerEvents: textBox.style.pointerEvents
     };
 
-    // Make the box editable using contenteditable
     textBox.contentEditable = 'true';
     textBox.classList.add('editing');
 
-    // Set the text with actual line breaks for editing
-    // FIX: Clear any existing HTML (like <br> tags) first to ensure consistent rendering
     textBox.innerHTML = '';
     textBox.textContent = editableState.originalText.replace(/\u200B/g, "\n");
 
-    // Apply editing styles
     Object.assign(textBox.style, {
         background: 'rgba(255, 255, 255, 0.95)',
         color: '#000',
@@ -823,10 +759,9 @@ function enterEditMode(textBox, sourceImage) {
         resize: 'none',
         minWidth: 'max-content',
         minHeight: 'max-content',
-        pointerEvents: 'auto' // Crucial to override the mobile touch rule so keyboard opens
+        pointerEvents: 'auto'
     });
 
-    // Focus and select all text
     textBox.focus();
     const range = document.createRange();
     range.selectNodeContents(textBox);
@@ -834,9 +769,7 @@ function enterEditMode(textBox, sourceImage) {
     sel.removeAllRanges();
     sel.addRange(range);
 
-    // Handle save on blur or Enter (without shift for new line)
     const saveEdit = () => {
-        // Guard clause against double‑firing (Enter followed immediately by Blur)
         if (!editableState.originalText) return;
 
         const newText = textBox.textContent.trim().replace(/\n+/g, '\n');
@@ -851,7 +784,6 @@ function enterEditMode(textBox, sourceImage) {
         exitEditMode(textBox, true);
     };
 
-    // Event listeners
     textBox.addEventListener('blur', saveEdit, { once: true });
 
     textBox.addEventListener('keydown', (e) => {
@@ -866,7 +798,6 @@ function enterEditMode(textBox, sourceImage) {
         }
     });
 
-    // Prevent the overlay from hiding while editing
     const state = managedElements.get(sourceImage);
     if (state && state.hideTimer) {
         clearTimeout(state.hideTimer);
@@ -879,9 +810,7 @@ function enterEditMode(textBox, sourceImage) {
 function exitEditMode(textBox, restoreOriginal = false) {
     if (!textBox) return;
 
-    // Restore original text if canceling
     if (restoreOriginal && editableState.originalText) {
-        // Restore the proper format based on whether it's merged
         const hasLineBreaks = editableState.originalText.includes('\u200B');
         if (hasLineBreaks) {
             textBox.innerHTML = editableState.originalText.replace(/\u200B/g, "<br>");
@@ -890,7 +819,6 @@ function exitEditMode(textBox, restoreOriginal = false) {
         }
     }
 
-    // Remove editing attributes and styles
     textBox.contentEditable = 'false';
     textBox.classList.remove('editing');
     textBox.style.border = '';
@@ -898,12 +826,10 @@ function exitEditMode(textBox, restoreOriginal = false) {
     textBox.style.overflowWrap = '';
     textBox.style.wordWrap = '';
 
-    // Restore original styles
     if (editableState.originalStyles) {
         Object.assign(textBox.style, editableState.originalStyles);
     }
 
-    // Clear state
     editableState.activeEditBox = null;
     editableState.originalText = null;
     editableState.originalStyles = null;
@@ -912,10 +838,8 @@ function exitEditMode(textBox, restoreOriginal = false) {
 
 // FIX 4: Update saveTextChanges to properly handle the display format
 function saveTextChanges(textBox, sourceImage, newText) {
-    // Normalize newlines to \u200B for consistency with merge logic
     const normalizedText = newText.replace(/\n/g, '\u200B');
 
-    // Update dataset and OCR data
     textBox.dataset.fullText = normalizedText;
 
     const data = ocrDataCache.get(sourceImage);
@@ -926,13 +850,11 @@ function saveTextChanges(textBox, sourceImage, newText) {
             data[index].isMerged = normalizedText.includes('\u200B');
             ocrDataCache.set(sourceImage, data);
 
-            // Update the _ocrData reference on the element
             textBox._ocrData = data[index];
 
             if (data[index].isMerged) {
                 textBox.style.whiteSpace = 'pre';
                 textBox.style.textAlign = 'start';
-                // IMPORTANT: Set innerHTML with <br> tags, not textContent
                 textBox.innerHTML = normalizedText.replace(/\u200B/g, "<br>");
             } else {
                 textBox.style.whiteSpace = 'nowrap';
@@ -944,14 +866,11 @@ function saveTextChanges(textBox, sourceImage, newText) {
         }
     }
 
-    // ADD THIS: Find the overlay to invalidate cache
     const overlay = textBox.closest('.gemini-ocr-decoupled-overlay');
     if (overlay) overlay._forceRecalc = true;
-    // Re‑calculate styles for the updated text
     const imgRect = sourceImage.getBoundingClientRect();
     calculateAndApplyStylesForSingleBox(textBox, imgRect);
 
-    // Sync changes to server
     syncCacheToServer(sourceImage).then(success => {
         if (!success) {
             logDebug("Warning: Failed to sync edit changes to server cache");
@@ -1015,15 +934,13 @@ function displayOcrResults(targetImg) {
     const handleHide = () => {
         if (activeOverlay && activeOverlay !== overlay) return;
         state.hideTimer = setTimeout(() => {
-            // Only hide if no merge anchor set and not editing
             if (activeOverlay === overlay && mergeState.anchorBox === null && !editableState.activeEditBox) {
                 hideActiveOverlay();
             }
             state.hideTimer = null;
-        }, 500); // Increased timeout slightly for better mobile feel
+        }, 500);
     };
 
-    // Helper to reset tool states
     const resetToolState = () => {
         toolState.isMergeMode = false;
         toolState.isEditMode = false;
@@ -1037,7 +954,6 @@ function displayOcrResults(targetImg) {
         }
     };
 
-    // Interaction Helpers extracted for use across both PC and Mobile click listeners
     const cancelSelection = () => {
         overlay.querySelectorAll('.manual-highlight, .selected-for-merge')
             .forEach(b => b.classList.remove('manual-highlight', 'selected-for-merge'));
@@ -1097,26 +1013,22 @@ function displayOcrResults(targetImg) {
         }
     };
 
-    // 1. Desktop Hover (Native events pass because pointer-events is auto on PC)
+    // 1. Desktop Hover
     targetImg.addEventListener('mouseenter', handleShow);
     targetImg.addEventListener('mouseleave', handleHide);
     overlay.addEventListener('mouseenter', handleShow);
     overlay.addEventListener('mouseleave', handleHide);
 
 // 2. PC Wheel Scrolling Fix
-    // Intercepts scroll commands on the overlay and manually forwards them to the underlying scroll container
     overlay.addEventListener('wheel', (e) => {
-        if (editableState.activeEditBox) return; // Allow normal scroll inside edit box
-        e.preventDefault(); // Stop overlay from trapping scroll
+        if (editableState.activeEditBox) return;
+        e.preventDefault();
 
-        // ---> ADJUST SCROLL SPEED HERE <---
-        // 1.0 is default browser speed. 2.0 is twice as fast. 0.5 is half as fast.
         const scrollMultiplier = 0.85;
 
         let scrollTarget = window;
         let node = targetImg;
 
-        // Find deepest scrollable container for the image
         while (node && node !== document.body && node !== document.documentElement) {
             const style = window.getComputedStyle(node);
             const canScrollY = node.scrollHeight > node.clientHeight && (style.overflowY === 'auto' || style.overflowY === 'scroll');
@@ -1129,7 +1041,6 @@ function displayOcrResults(targetImg) {
             node = node.parentNode;
         }
 
-        // Apply the multiplier to the scroll distance
         const moveX = e.deltaX * scrollMultiplier;
         const moveY = e.deltaY * scrollMultiplier;
 
@@ -1140,7 +1051,7 @@ function displayOcrResults(targetImg) {
         }
     }, { passive: false });
 
-    // 3. PC Click / DblClick (Fires natively on the text box because pointer-events is auto)
+    // 3. PC Click / DblClick
     overlay.addEventListener('click', (e) => {
         if (editableState.activeEditBox) return;
         const clickedBox = e.target.closest('.gemini-ocr-text-box');
@@ -1163,20 +1074,18 @@ function displayOcrResults(targetImg) {
     });
 
     // 4. Mobile Show & Swiping Fix
-    // Triggers instantly for better UX
     targetImg.addEventListener('touchstart', (e) => {
         handleShow();
     }, { passive: true });
 
-    // 5. Mobile Click (Fires natively on image because pointer-events is NONE on mobile text boxes)
+    // 5. Mobile Click
     targetImg.addEventListener('click', (e) => {
         handleShow();
-        if (editableState.activeEditBox) return; // If editing, clicks fall through to auto-box
+        if (editableState.activeEditBox) return;
 
-        // If they click the image directly, we check if they actually meant to tap a box (Mobile fallback)
         let clickedBox = null;
         const boxes = overlay.querySelectorAll('.gemini-ocr-text-box');
-        const padding = 15; // Generous padding for touch targets
+        const padding = 15;
 
         for (let i = 0; i < boxes.length; i++) {
             const box = boxes[i];
@@ -1448,8 +1357,8 @@ function displayOcrResults(targetImg) {
             });
             document.body.appendChild(overlay);
 
-            // Create crop box with 5:4 aspect ratio
-            const ASPECT_RATIO = 5 / 4;
+            // Create crop box with 4:3 aspect ratio
+            const ASPECT_RATIO = 4 / 3;
             const cropBox = document.createElement('div');
             Object.assign(cropBox.style, {
                 position: 'absolute',
@@ -1773,47 +1682,50 @@ function displayOcrResults(targetImg) {
     }
 
     // --- Sync Cache ---
-    async function syncCacheToServer(sourceImage) {
-        if (!sourceImage || !sourceImage.src) {
-            logDebug("syncCacheToServer: Invalid image provided");
-            return false;
-        }
-        const cacheData = ocrDataCache.get(sourceImage);
-        if (!cacheData || !Array.isArray(cacheData)) {
-            logDebug("syncCacheToServer: No valid cache data found");
-            return false;
-        }
-        return new Promise((resolve) => {
-            const updateData = {
-                url: sourceImage.src,
-                data: cacheData,
-                context: document.title
-            };
-            GM_xmlhttpRequest({
-                method: 'POST',
-                url: `${settings.ocrServerUrl}/update-cache`,
-                headers: { 'Content-Type': 'application/json' },
-                data: JSON.stringify(updateData),
-                timeout: 10000,
-                onload: (response) => {
-                    try {
-                        const data = JSON.parse(response.responseText);
-                        if (response.status === 200 && data.status === 'success') {
-                            logDebug(`Cache synced successfully: ${sourceImage.src.slice(-50)}`);
-                            resolve(true);
-                        } else {
-                            throw new Error(data.error || 'Unknown error');
-                        }
-                    } catch (e) {
-                        logDebug(`Cache sync failed: ${e.message}`);
-                        resolve(false);
-                    }
-                },
-                onerror: () => { logDebug('Cache sync connection error'); resolve(false); },
-                ontimeout: () => { logDebug('Cache sync timed out'); resolve(false); }
-            });
-        });
+async function syncCacheToServer(sourceImage) {
+    if (!sourceImage || !sourceImage.src) {
+        logDebug("syncCacheToServer: Invalid image provided");
+        return false;
     }
+    const cacheData = ocrDataCache.get(sourceImage);
+    if (!cacheData || !Array.isArray(cacheData)) {
+        logDebug("syncCacheToServer: No valid cache data found");
+        return false;
+    }
+
+    const normalizedUrl = sourceImage.src.split('?')[0];
+
+    return new Promise((resolve) => {
+        const updateData = {
+            url: normalizedUrl,
+            data: cacheData,
+            context: document.title
+        };
+        GM_xmlhttpRequest({
+            method: 'POST',
+            url: `${settings.ocrServerUrl}/update-cache`,
+            headers: { 'Content-Type': 'application/json' },
+            data: JSON.stringify(updateData),
+            timeout: 10000,
+            onload: (response) => {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (response.status === 200 && data.status === 'success') {
+                        logDebug(`Cache synced successfully: ${normalizedUrl.slice(-50)}`);
+                        resolve(true);
+                    } else {
+                        throw new Error(data.error || 'Unknown error');
+                    }
+                } catch (e) {
+                    logDebug(`Cache sync failed: ${e.message}`);
+                    resolve(false);
+                }
+            },
+            onerror: () => { logDebug('Cache sync connection error'); resolve(false); },
+            ontimeout: () => { logDebug('Cache sync timed out'); resolve(false); }
+        });
+    });
+}
 
     // --- Batch & Chapter Processing ---
     async function runProbingProcess(baseUrl, btn) {
@@ -1897,7 +1809,7 @@ function displayOcrResults(targetImg) {
         actionContainer.insertBefore(ocrButton, moreButton);
     }
 
-    // --- UI, Styles and Initialization ---
+// --- [OPTIMIZED] UI, Styles and Initialization ---
 function applyTheme() {
     const theme = COLOR_THEMES[settings.colorTheme] || COLOR_THEMES.blue;
     const cssVars = `:root {
@@ -1915,113 +1827,56 @@ function applyTheme() {
     }
     styleTag.textContent = cssVars;
 
-
-        document.body.className = document.body.className.replace(/\bocr-theme-\S+/g, '');
-        document.body.classList.add(`ocr-theme-${settings.colorTheme}`);
-        document.body.classList.toggle('ocr-brightness-dark', settings.brightnessMode === 'dark');
-        document.body.classList.toggle('ocr-brightness-light', settings.brightnessMode === 'light');
-        document.body.className = document.body.className.replace(/\bocr-focus-color-mode-\S+/g, '');
-        if (settings.focusFontColor && settings.focusFontColor !== 'default') {
-            document.body.classList.add(`ocr-focus-color-mode-${settings.focusFontColor}`);
-        }
-
-        // Apply mobile‑mode class (for animation removal)
-        document.body.classList.toggle('mobile-mode', settings.mobileMode);
+    document.body.className = document.body.className.replace(/\bocr-theme-\S+/g, '');
+    document.body.classList.add(`ocr-theme-${settings.colorTheme}`);
+    document.body.classList.toggle('ocr-brightness-dark', settings.brightnessMode === 'dark');
+    document.body.classList.toggle('ocr-brightness-light', settings.brightnessMode === 'light');
+    document.body.className = document.body.className.replace(/\bocr-focus-color-mode-\S+/g, '');
+    if (settings.focusFontColor && settings.focusFontColor !== 'default') {
+        document.body.classList.add(`ocr-focus-color-mode-${settings.focusFontColor}`);
     }
+
+    // Apply mobile‑mode class (for animation removal)
+    document.body.classList.toggle('mobile-mode', settings.mobileMode);
+}
 
 function createUI() {
     // Existing style block
     GM_addStyle(`
         /* --- GHOST TEXT: Suwayomi UI Fix --- */
-        /* Applies to Suwayomi text elements so Yomitan ignores them */
-        .yomitan-ghost-text {
-            /* Hide the DOM text node so Yomitan ignores it */
-            visibility: hidden !important;
-
-            /* Establish a positioning context for the ::after element */
-            position: relative !important;
-
-            /* Respect the original element's display (block, flex, inline, etc.) */
-            display: inherit !important;
-        }
-
+        .yomitan-ghost-text { visibility: hidden !important; position: relative !important; display: inherit !important; }
         .yomitan-ghost-text::after {
-            /* Pull the text from the data attribute */
-            content: attr(data-text);
-
-            /* Make the CSS text visible to the human eye */
-            visibility: visible !important;
-
-            /* Position the text exactly over the invisible original text */
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-
-            /* Inherit all typography styles to look identical to original */
-            font: inherit;
-            color: inherit;
-            letter-spacing: inherit;
-            text-align: inherit;
-
-            /* Crucial for the description paragraph to wrap correctly */
-            white-space: pre-wrap;
-
-            /* Allow mouse interaction (clicks) to pass through if needed */
-            pointer-events: auto;
+            content: attr(data-text); visibility: visible !important; position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%; font: inherit; color: inherit; letter-spacing: inherit; text-align: inherit;
+            white-space: pre-wrap; pointer-events: auto;
         }
         /* --- YOUR EXISTING OCR STYLES --- */
         .gemini-ocr-decoupled-overlay { position: fixed; z-index: 9998; pointer-events: none; opacity: 0; display: none; }
         .gemini-ocr-decoupled-overlay.is-focused { opacity: 1; display: block; }
         ::selection { background-color: rgba(var(--accent), 1); color: #FFFFFF; }
         .gemini-ocr-text-box {
-            position: absolute;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            text-align: center;
-            box-sizing: border-box;
-            user-select: text;
-            cursor: pointer;
-            transition: opacity 0.2s, transform 0.1s;
-            overflow: visible !important;
-            font-family: 'Noto Sans JP', sans-serif;
-            font-weight: 600;
-            padding: 2px !important;
-            border-radius: 4px;
-            border: none;
-            text-shadow: none;
-            pointer-events: auto; /* CRITICAL: Enables Yomitan and Editing on PC */
-            min-height: 30px !important;
-            min-width: 30px !important;
+            position: absolute; display: flex; align-items: center; justify-content: center; text-align: center;
+            box-sizing: border-box; user-select: text; cursor: pointer; transition: opacity 0.2s, transform 0.1s;
+            overflow: visible !important; font-family: 'Noto Sans JP', sans-serif; font-weight: 600;
+            padding: 2px !important; border-radius: 4px; border: none; text-shadow: none;
+            pointer-events: auto; min-height: 30px !important; min-width: 30px !important;
         }
 
        /* MODIFIED HYBRID TOUCH LOGIC: Allow Yomitan scanning while preserving scroll */
         @media (hover: none) and (pointer: coarse) {
-            .gemini-ocr-text-box {
-                pointer-events: auto !important; /* Allows Yomitan to detect the text under your finger */
-                touch-action: pan-x pan-y !important; /* Explicitly tells the browser to keep native scrolling */
-            }
+            .gemini-ocr-text-box { pointer-events: auto !important; touch-action: pan-x pan-y !important; }
         }
 
         /* Ensure focused boxes can overflow properly */
         .interaction-mode-hover.is-focused .gemini-ocr-text-box:hover,
         .interaction-mode-click.is-focused .manual-highlight {
-            z-index: 1;
-            transform: scale(var(--ocr-focus-scale, 1.1)) !important;
-            overflow: visible !important;
-            min-height: 40px !important;
-            min-width: 40px !important;
+            z-index: 1; transform: scale(var(--ocr-focus-scale, 1.1)) !important; overflow: visible !important;
+            min-height: 40px !important; min-width: 40px !important;
         }
 
         /* Mobile responsive adjustments */
         @media (max-width: 768px) {
-            .gemini-ocr-text-box {
-                min-width: 40px !important;
-                min-height: 40px !important;
-                font-size: 24px !important;
-            }
+            .gemini-ocr-text-box { min-width: 40px !important; min-height: 40px !important; font-size: 24px !important; }
         }
         .gemini-ocr-text-box.selected-for-merge { outline: 3px solid #f1c40f !important; outline-offset: 2px; box-shadow: 0 0 12px #f1c40f !important; z-index: 2; }
         body.ocr-brightness-light .gemini-ocr-text-box { background: rgba(var(--background), 1); color: rgba(var(--accent), 0.5); box-shadow: 0 0 0 0.1em rgba(var(--background), 1); }
@@ -2045,273 +1900,86 @@ function createUI() {
 
         /* Editable text box styles */
         .gemini-ocr-text-box.editing {
-            background: rgba(255, 255, 255, 0.95) !important;
-            color: #000 !important;
-            z-index: 10000 !important;
-            border: 2px solid #3498db !important;
-            border-radius: 4px !important;
-            padding: 0px !important;
-            white-space: pre !important;
-            text-align: left !important;
-            overflow: auto !important;
-            overflow-wrap: normal !important;
-            word-wrap: normal !important;
-            cursor: text !important;
-            min-width: max-content !important;
-            min-height: max-content !important;
-            /* CRITICAL for mobile editing */
-            pointer-events: auto !important;
+            background: rgba(255, 255, 255, 0.95) !important; color: #000 !important; z-index: 10000 !important;
+            border: 2px solid #3498db !important; border-radius: 4px !important; padding: 0px !important;
+            white-space: pre !important; text-align: left !important; overflow: auto !important;
+            overflow-wrap: normal !important; word-wrap: normal !important; cursor: text !important;
+            min-width: max-content !important; min-height: max-content !important; pointer-events: auto !important;
         }
-        /* For vertical text in edit mode */
-        .gemini-ocr-text-box.editing.gemini-ocr-text-vertical {
-            white-space: pre !important;
-            text-align: start !important;
-        }
+        .gemini-ocr-text-box.editing.gemini-ocr-text-vertical { white-space: pre !important; text-align: start !important; }
 
         /* Chapter Batch Button */
         .gemini-ocr-chapter-batch-btn {
-            font-family: "Roboto", "Helvetica", "Arial", sans-serif;
-            font-weight: 500;
-            font-size: 0.75rem;
-            padding: 2px 8px;
-            border-radius: 4px;
-            border: 1px solid rgba(240, 153, 136, 0.5);
-            color: #f09988;
-            background-color: transparent;
-            cursor: pointer;
-            margin-right: 4px;
-            transition: all 150ms;
-            min-width: 80px;
-            text-align: center;
+            font-family: "Roboto", "Helvetica", "Arial", sans-serif; font-weight: 500; font-size: 0.75rem;
+            padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(240, 153, 136, 0.5); color: #f09988;
+            background-color: transparent; cursor: pointer; margin-right: 4px; transition: all 150ms;
+            min-width: 80px; text-align: center;
         }
-        .gemini-ocr-chapter-batch-btn:hover {
-            background-color: rgba(240, 153, 136, 0.08);
-        }
-        .gemini-ocr-chapter-batch-btn:disabled {
-            color: grey;
-            border-color: grey;
-            cursor: wait;
-        }
+        .gemini-ocr-chapter-batch-btn:hover { background-color: rgba(240, 153, 136, 0.08); }
+        .gemini-ocr-chapter-batch-btn:disabled { color: grey; border-color: grey; cursor: wait; }
 
-/* Settings Button - 20% Larger */
+        /* Settings Button - 20% Larger */
         #gemini-ocr-settings-button {
-            position: fixed;
-            bottom: 10px;
-            right: 15px;
-            z-index: 2147483647;
-            background: #1A1D21;
-            color: #EAEAEA;
-            border: 1px solid #555;
-            border-radius: 50%;
-            width: 50px;    /* Increased from 35px */
-            height: 50px;   /* Increased from 35px */
-            font-size: 26px; /* Increased from 18px */
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-            user-select: none;
-            transition: all 0.2s ease;
-            line-height: 1;
+            position: fixed; bottom: 10px; right: 15px; z-index: 2147483647; background: #1A1D21; color: #EAEAEA;
+            border: 1px solid #555; border-radius: 50%; width: 50px; height: 50px; font-size: 26px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+            user-select: none; transition: all 0.2s ease; line-height: 1;
         }
-        #gemini-ocr-settings-button:hover {
-            background: #2A2D31;
-            transform: scale(1.1);
-        }
+        #gemini-ocr-settings-button:hover { background: #2A2D31; transform: scale(1.1); }
 
         /* ----------------- FAB / Speed Dial Menu CSS ----------------- */
-        .gemini-ocr-fab-container {
-            position: fixed;
-            bottom: 64px;
-            right: 15px;
-            z-index: 2147483646;
-            display: flex;
-            flex-direction: column-reverse;
-            align-items: center;
-            gap: 10px;
-        }
-
+        .gemini-ocr-fab-container { position: fixed; bottom: 64px; right: 15px; z-index: 2147483646; display: flex; flex-direction: column-reverse; align-items: center; gap: 10px; }
         .gemini-ocr-fab-btn {
-            width: 50px;
-            height: 50px;
-            border-radius: 50%;
-            border: 1px solid #555;
-            background: #1A1D21;
-            color: #EAEAEA;
-            font-size: 26px;
-            cursor: pointer;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-            transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            user-select: none;
-            line-height: 1;
+            width: 50px; height: 50px; border-radius: 50%; border: 1px solid #555; background: #1A1D21; color: #EAEAEA;
+            font-size: 26px; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.5); transition: all 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            display: flex; align-items: center; justify-content: center; user-select: none; line-height: 1;
         }
-
-        .gemini-ocr-fab-btn:hover {
-            background: #27ae60;
-            transform: scale(1.1);
-        }
-
-        .gemini-ocr-fab-child {
-            transform: scale(0);
-            opacity: 0;
-            height: 0;
-            margin: 0;
-            border: 0;
-            pointer-events: none;
-        }
-
-        .gemini-ocr-fab-container.is-open .gemini-ocr-fab-child {
-            transform: scale(1);
-            opacity: 1;
-            height: 40px;
-            width: 40px;
-            pointer-events: auto;
-            border: 1px solid #555;
-        }
-
-        .gemini-ocr-fab-btn.active-mode {
-            background-color: #f1c40f !important;
-            color: #000 !important;
-            border-color: #fff !important;
-            box-shadow: 0 0 10px #f1c40f;
-        }
-
-        .gemini-ocr-fab-container.is-open #gemini-ocr-fab-main {
-            transform: rotate(45deg);
-            background-color: #c0392b;
-        }
+        .gemini-ocr-fab-btn:hover { background: #27ae60; transform: scale(1.1); }
+        .gemini-ocr-fab-child { transform: scale(0); opacity: 0; height: 0; margin: 0; border: 0; pointer-events: none; }
+        .gemini-ocr-fab-container.is-open .gemini-ocr-fab-child { transform: scale(1); opacity: 1; height: 40px; width: 40px; pointer-events: auto; border: 1px solid #555; }
+        .gemini-ocr-fab-btn.active-mode { background-color: #f1c40f !important; color: #000 !important; border-color: #fff !important; box-shadow: 0 0 10px #f1c40f; }
+        .gemini-ocr-fab-container.is-open #gemini-ocr-fab-main { transform: rotate(45deg); background-color: #c0392b; }
 
         /* Modals & Layout */
         .gemini-ocr-modal {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background-color: #1A1D21;
-            border: 1px solid var(--modal-header-color, #00BFFF);
-            border-radius: 15px;
-            z-index: 2147483647;
-            color: #EAEAEA;
-            font-family: sans-serif;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
-            width: 600px;
-            max-width: 90vw;
-            max-height: 90vh;
-            display: flex;
-            flex-direction: column;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background-color: #1A1D21;
+            border: 1px solid var(--modal-header-color, #00BFFF); border-radius: 15px; z-index: 2147483647;
+            color: #EAEAEA; font-family: sans-serif; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+            width: 600px; max-width: 90vw; max-height: 90vh; display: flex; flex-direction: column;
         }
-        .gemini-ocr-modal.is-hidden {
-            display: none;
+        .gemini-ocr-modal.is-hidden { display: none; }
+        .gemini-ocr-modal-header { padding: 20px 25px; border-bottom: 1px solid #444; }
+        .gemini-ocr-modal-header h2 { margin: 0; color: var(--modal-header-color, #00BFFF); }
+        .gemini-ocr-modal-content { padding: 10px 25px; overflow-y: auto; flex-grow: 1; }
+        .gemini-ocr-modal-footer { padding: 15px 25px; border-top: 1px solid #444; display: flex; justify-content: flex-start; gap: 10px; align-items: center; }
+        .gemini-ocr-modal-footer button:last-of-type { margin-left: auto; }
+        .gemini-ocr-modal h3 { font-size: 1.1em; margin: 15px 0 10px 0; border-bottom: 1px solid #333; padding-bottom: 5px; color: var(--modal-header-color, #00BFFF); }
+        .gemini-ocr-settings-grid { display: grid; grid-template-columns: max-content 1fr; gap: 10px 15px; align-items: center; }
+        .full-width { grid-column: 1 / -1; }
+        .gemini-ocr-modal input, .gemini-ocr-modal textarea, .gemini-ocr-modal select {
+            width: 100%; padding: 8px; box-sizing: border-box; font-family: monospace;
+            background-color: #2a2a2e; border: 1px solid #555; border-radius: 5px; color: #EAEAEA;
         }
-        .gemini-ocr-modal-header {
-            padding: 20px 25px;
-            border-bottom: 1px solid #444;
-        }
-        .gemini-ocr-modal-header h2 {
-            margin: 0;
-            color: var(--modal-header-color, #00BFFF);
-        }
-        .gemini-ocr-modal-content {
-            padding: 10px 25px;
-            overflow-y: auto;
-            flex-grow: 1;
-        }
-        .gemini-ocr-modal-footer {
-            padding: 15px 25px;
-            border-top: 1px solid #444;
-            display: flex;
-            justify-content: flex-start;
-            gap: 10px;
-            align-items: center;
-        }
-        .gemini-ocr-modal-footer button:last-of-type {
-            margin-left: auto;
-        }
-        .gemini-ocr-modal h3 {
-            font-size: 1.1em;
-            margin: 15px 0 10px 0;
-            border-bottom: 1px solid #333;
-            padding-bottom: 5px;
-            color: var(--modal-header-color, #00BFFF);
-        }
-        .gemini-ocr-settings-grid {
-            display: grid;
-            grid-template-columns: max-content 1fr;
-            gap: 10px 15px;
-            align-items: center;
-        }
-        .full-width {
-            grid-column: 1 / -1;
-        }
-        .gemini-ocr-modal input,
-        .gemini-ocr-modal textarea,
-        .gemini-ocr-modal select {
-            width: 100%;
-            padding: 8px;
-            box-sizing: border-box;
-            font-family: monospace;
-            background-color: #2a2a2e;
-            border: 1px solid #555;
-            border-radius: 5px;
-            color: #EAEAEA;
-        }
-        .gemini-ocr-modal button {
-            padding: 10px 18px;
-            border: none;
-            border-radius: 5px;
-            color: #1A1D21;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        #gemini-ocr-server-status {
-            padding: 10px;
-            border-radius: 5px;
-            text-align: center;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-        #gemini-ocr-server-status.status-ok {
-            background-color: #27ae60;
-        }
-        #gemini-ocr-server-status.status-error {
-            background-color: #c0392b;
-        }
-        #gemini-ocr-server-status.status-checking {
-            background-color: #3498db;
-        }
+        .gemini-ocr-modal button { padding: 10px 18px; border: none; border-radius: 5px; color: #1A1D21; cursor: pointer; font-weight: bold; }
+        #gemini-ocr-server-status { padding: 10px; border-radius: 5px; text-align: center; cursor: pointer; transition: background-color 0.3s; }
+        #gemini-ocr-server-status.status-ok { background-color: #27ae60; }
+        #gemini-ocr-server-status.status-error { background-color: #c0392b; }
+        #gemini-ocr-server-status.status-checking { background-color: #3498db; }
 
         @media (max-width: 768px) {
-            .gemini-ocr-text-box {
-                min-width: 30px;
-                min-height: 30px;
-                font-size: 14px !important;
-            }
-            #gemini-ocr-settings-button, .gemini-ocr-fab-btn {
-                width: 45px;
-                height: 45px;
-                font-size: 24px;
-            }
+            .gemini-ocr-text-box { min-width: 30px; min-height: 30px; font-size: 14px !important; }
+            #gemini-ocr-settings-button, .gemini-ocr-fab-btn { width: 45px; height: 45px; font-size: 24px; }
         }
     `);
 
     // Mobile-mode style block
     GM_addStyle(`
-        .mobile-mode .gemini-ocr-text-box {
-            transition: none !important;
-            animation: none !important;
-        }
+        .mobile-mode .gemini-ocr-text-box { transition: none !important; animation: none !important; }
     `);
 
     document.body.insertAdjacentHTML('beforeend', `
         <div id="gemini-ocr-fab-container" class="gemini-ocr-fab-container">
-            <!-- Main Toggle -->
             <button id="gemini-ocr-fab-main" class="gemini-ocr-fab-btn" title="Menu">➕</button>
-
-            <!-- Child Buttons -->
             <button id="gemini-ocr-fab-delete" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Delete Mode (Click a box)">🗑️</button>
             <button id="gemini-ocr-fab-edit" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Edit Mode (Single Click)">✏️</button>
             <button id="gemini-ocr-fab-merge" class="gemini-ocr-fab-btn gemini-ocr-fab-child" title="Toggle Merge Mode (Click 2 boxes)">🔗</button>
@@ -2385,97 +2053,85 @@ function createUI() {
         </div>
     `);
 
-// --- NEW: Ghost Text Logic for Suwayomi ---
-    // This finds Suwayomi's text elements and applies the ghost class so Yomitan ignores them.
-    // NOW INCLUDES: Support for 'Exit to...' buttons and Android Alt-Wiper.
+    // --- OPTIMIZED: Ghost Text Logic for Suwayomi ---
     function applyGhostTextToSuwayomi() {
-        // CRITICAL CHECK: Only apply this logic if we are actually reading a chapter
         const isChapterPage = /\/manga\/\d+\/chapter\/\d+/.test(window.location.href);
 
-        // 1. CLEANUP: If NOT on a chapter page, force remove all ghost effects immediately.
+        // 1. CLEANUP: If NOT on a chapter page, force remove.
         if (!isChapterPage) {
-            document.querySelectorAll('.yomitan-ghost-text').forEach(el => {
-                el.classList.remove('yomitan-ghost-text');
-                el.removeAttribute('data-text');
-            });
+            const existingGhosts = document.querySelectorAll('.yomitan-ghost-text');
+            if (existingGhosts.length > 0) {
+                existingGhosts.forEach(el => {
+                    el.classList.remove('yomitan-ghost-text');
+                    el.removeAttribute('data-text');
+                });
+            }
             return;
         }
 
-        // --- PART A: TEXT ELEMENTS (The Ghost Class Method) ---
+        // --- PART A: TEXT ELEMENTS ---
         const selectors =[
-            '.MuiTypography-root',      // Standard text
-            '.MuiButton-label',         // Old style Buttons
-            '.MuiButton-root',          // <--- NEW: Targets 'Exit to...' buttons
-            '.MuiChip-label',           // Chips/Tags
-            '.MuiListItemText-primary', // Sidebar text
-            '.MuiListItemText-secondary',
-            '.MuiTab-wrapper'           // Tabs
+            '.MuiTypography-root', '.MuiButton-label', '.MuiButton-root',
+            '.MuiChip-label', '.MuiListItemText-primary', '.MuiListItemText-secondary', '.MuiTab-wrapper'
         ];
 
         const textElements = document.querySelectorAll(selectors.join(', '));
 
-        textElements.forEach(el => {
-            // EXCLUSION: Skip everything inside a Dialog (Settings, Popups, etc.)
-            if (el.closest('.MuiDialogContent-root')) return;
+        // Loop using standard 'for' loop (faster than forEach for large NodeLists)
+        for(let i = 0; i < textElements.length; i++) {
+            const el = textElements[i];
 
-            // Optimization: Skip if already correctly ghosted
+            if (el.closest('.MuiDialogContent-root') || el.childElementCount > 0) continue;
+
             if (el.classList.contains('yomitan-ghost-text')) {
                 if (el.innerText !== el.getAttribute('data-text')) {
                     el.setAttribute('data-text', el.innerText);
                 }
-                return;
+                continue;
             }
 
-            // STRICT CHECK: Leaf Nodes only
-            // We only apply this if the element contains JUST text (no icons, no inner spans)
-            // This prevents breaking complex buttons that contain layouts.
-            if (el.childElementCount > 0) return;
-
             const text = el.innerText.trim();
-            if (text.length === 0) return;
+            if (text.length === 0) continue;
 
             el.setAttribute('data-text', text);
             el.classList.add('yomitan-ghost-text');
-        });
+        }
 
-        // --- PART B: IMAGE ALT TEXT (The Aggressive Wipe Method) ---
-        // Continuously wipe alt text for Android support
-        const images = document.querySelectorAll('img');
-        images.forEach(img => {
-            if (img.hasAttribute('alt') && img.getAttribute('alt').length > 0) {
-                img.setAttribute('alt', '');
-                img.removeAttribute('alt');
-            }
-        });
+        // --- PART B: IMAGE ALT TEXT (Aggressive Wipe) ---
+        // Native CSS selector filters out empty alts before JS even runs (Huge performance win)
+        const images = document.querySelectorAll('img[alt]:not([alt=""])');
+        for(let i = 0; i < images.length; i++) {
+            images[i].removeAttribute('alt');
+        }
     }
 
-    // A. Observer: Catches immediate DOM changes
-    const ghostObserver = new MutationObserver(() => applyGhostTextToSuwayomi());
+    // Debounced Observer for React DOM updates
+    let ghostDebounceTimer;
+    const ghostObserver = new MutationObserver(() => {
+        if (ghostDebounceTimer) cancelAnimationFrame(ghostDebounceTimer);
+        ghostDebounceTimer = requestAnimationFrame(applyGhostTextToSuwayomi);
+    });
+
     const appRoot = document.getElementById('root') || document.body;
     ghostObserver.observe(appRoot, { childList: true, subtree: true });
 
-    // B. Poller: The "Strict" enforcer (Runs every 1s)
-    setInterval(applyGhostTextToSuwayomi, 1000);
-
-    // C. Initial Run
+    // Poller fallback - lowered frequency slightly since MutationObserver is active
+    setInterval(applyGhostTextToSuwayomi, 1500);
     applyGhostTextToSuwayomi();
 }
 
     // Abstracted Anki Export Function for reuse
     const handleAnkiExportClick = async () => {
         let targetImage = activeImageForExport;
-        // NEW: Use enhanced function that falls back to visible images
         const validRecentImages = getValidImagesForExport();
 
-        // If we have multiple valid images, show a selection UI
         if (validRecentImages.length > 1) {
             targetImage = await showImageSelectionDialog(validRecentImages);
-            if (!targetImage) return; // User cancelled
+            if (!targetImage) return;
         } else if (validRecentImages.length === 1) {
             targetImage = validRecentImages[0].image;
         }
 
-        // Get current chapter for validation
         const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
 
         if (targetImage) {
@@ -2525,7 +2181,6 @@ function createUI() {
             settingsButton: document.getElementById('gemini-ocr-settings-button'),
             settingsModal: document.getElementById('gemini-ocr-settings-modal'),
 
-            // FAB Buttons
             fabContainer: document.getElementById('gemini-ocr-fab-container'),
             fabMain: document.getElementById('gemini-ocr-fab-main'),
             fabDelete: document.getElementById('gemini-ocr-fab-delete'),
@@ -2542,7 +2197,6 @@ function createUI() {
             debugModeCheckbox: document.getElementById('gemini-ocr-debug-mode'),
             soloHoverCheckbox: document.getElementById('gemini-ocr-solo-hover-mode'),
             addSpaceOnMergeCheckbox: document.getElementById('gemini-ocr-add-space-on-merge'),
-            // NEW: Mobile mode checkboxes
             mobileModeCheckbox: document.getElementById('gemini-ocr-mobile-mode'),
             mobileEditMergingCheckbox: document.getElementById('gemini-ocr-mobile-edit-merging'),
 
@@ -2571,9 +2225,8 @@ function createUI() {
 
         UI.settingsButton.addEventListener('click', () => UI.settingsModal.classList.toggle('is-hidden'));
 
-        // --- NEW: FAB / Button Logic based on Settings ---
+        // --- FAB / Button Logic based on Settings ---
         if (settings.mobileEditMerging) {
-            // Mode A: Toggleable Menu enabled
             UI.fabMain.addEventListener('click', () => {
                 toolState.isMenuOpen = !toolState.isMenuOpen;
                 UI.fabContainer.classList.toggle('is-open', toolState.isMenuOpen);
@@ -2581,7 +2234,6 @@ function createUI() {
 
             UI.fabDelete.addEventListener('click', () => {
                 toolState.isDeleteMode = !toolState.isDeleteMode;
-                // Exclusive modes
                 if (toolState.isDeleteMode) {
                     toolState.isMergeMode = false;
                     toolState.isEditMode = false;
@@ -2590,14 +2242,12 @@ function createUI() {
                 }
                 UI.fabDelete.classList.toggle('active-mode', toolState.isDeleteMode);
 
-                // Close menu on click
                 toolState.isMenuOpen = false;
                 UI.fabContainer.classList.remove('is-open');
             });
 
             UI.fabEdit.addEventListener('click', () => {
                 toolState.isEditMode = !toolState.isEditMode;
-                // Exclusive modes
                 if (toolState.isEditMode) {
                     toolState.isMergeMode = false;
                     toolState.isDeleteMode = false;
@@ -2606,21 +2256,18 @@ function createUI() {
                 }
                 UI.fabEdit.classList.toggle('active-mode', toolState.isEditMode);
 
-                // NEW: Close menu on click
                 toolState.isMenuOpen = false;
                 UI.fabContainer.classList.remove('is-open');
             });
 
             UI.fabMerge.addEventListener('click', () => {
                 toolState.isMergeMode = !toolState.isMergeMode;
-                // Exclusive modes
                 if (toolState.isMergeMode) {
                     toolState.isEditMode = false;
                     toolState.isDeleteMode = false;
                     UI.fabEdit.classList.remove('active-mode');
                     UI.fabDelete.classList.remove('active-mode');
                 } else {
-                    // Reset if turning off
                     if (mergeState.anchorBox) {
                         mergeState.anchorBox.classList.remove('selected-for-merge');
                         mergeState.anchorBox = null;
@@ -2628,32 +2275,24 @@ function createUI() {
                 }
                 UI.fabMerge.classList.toggle('active-mode', toolState.isMergeMode);
 
-                // NEW: Close menu on click
                 toolState.isMenuOpen = false;
                 UI.fabContainer.classList.remove('is-open');
             });
 
-            // Connect Anki Child Button
             UI.fabAnki.addEventListener('click', () => {
                  handleAnkiExportClick();
-                 // NEW: Close menu on click
                  toolState.isMenuOpen = false;
                  UI.fabContainer.classList.remove('is-open');
             });
 
         } else {
-            // Mode B: Simple Direct Anki Export (Default)
-            // Hide the child buttons permanently
             UI.fabDelete.style.display = 'none';
             UI.fabEdit.style.display = 'none';
             UI.fabMerge.style.display = 'none';
             UI.fabAnki.style.display = 'none';
-
-            // Make Main Button do the export
             UI.fabMain.addEventListener('click', handleAnkiExportClick);
         }
 
-        // Hover handling for Anki buttons (both scenarios)
         const relevantAnkiBtn = settings.mobileEditMerging ? UI.fabAnki : UI.fabMain;
         relevantAnkiBtn.addEventListener('mouseenter', () => {
             const state = activeImageForExport ? managedElements.get(activeImageForExport) : null;
@@ -2682,8 +2321,9 @@ function createUI() {
             UI.debugLogTextarea.scrollTop = UI.debugLogTextarea.scrollHeight;
         });
         UI.closeDebugBtn.addEventListener('click', () => UI.debugModal.classList.add('is-hidden'));
-        UI.batchChapterBtn.addEventListener('click', batchProcessCurrentChapterFromURL);
+        if (UI.batchChapterBtn) UI.batchChapterBtn.addEventListener('click', window.batchProcessCurrentChapterFromURL || (() => {}));
         UI.purgeCacheBtn.addEventListener('click', purgeServerCache);
+
         UI.saveBtn.addEventListener('click', async () => {
             const newSettings = {
                 ocrServerUrl: UI.serverUrlInput.value.trim(),
@@ -2694,7 +2334,6 @@ function createUI() {
                 debugMode: UI.debugModeCheckbox.checked,
                 soloHoverMode: UI.soloHoverCheckbox.checked,
                 addSpaceOnMerge: UI.addSpaceOnMergeCheckbox.checked,
-                // NEW: Save mobile mode settings
                 mobileMode: UI.mobileModeCheckbox.checked,
                 mobileEditMerging: UI.mobileEditMergingCheckbox.checked,
 
@@ -2729,6 +2368,7 @@ function createUI() {
                 alert(`Error: Could not save settings.`);
             }
         });
+
         document.addEventListener('ocr-log-update', () => {
             if (UI.debugModal && !UI.debugModal.classList.contains('is-hidden')) {
                 UI.debugLogTextarea.value = debugLog.join('\n');
@@ -2737,22 +2377,17 @@ function createUI() {
         });
     }
 
-// ENHANCED: Get valid images with fallback to visible images
 function getValidImagesForExport() {
     const currentChapterMatch = window.location.pathname.match(/\/manga\/\d+\/chapter\/\d+/);
     const validImages =[];
+    const existingImageElements = new Set();
 
-    // First, check recently hovered images
     for (const img of recentlyHoveredImages) {
         const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
         const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
                                      currentChapterMatch[0] === imageChapterMatch[0];
 
-        if (img.isConnected &&
-            managedElements.has(img) &&
-            img.naturalHeight > 0 &&
-            isFromCurrentChapter) {
-
+        if (img.isConnected && managedElements.has(img) && img.naturalHeight > 0 && isFromCurrentChapter) {
             const rect = img.getBoundingClientRect();
             const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
 
@@ -2762,25 +2397,19 @@ function getValidImagesForExport() {
                 isInViewport: isInViewport,
                 pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
             });
+            existingImageElements.add(img);
         }
     }
 
-    // If we have less than 2 valid images, supplement with visible images
     if (validImages.length < 2) {
-        const existingImageElements = new Set(validImages.map(item => item.image));
         for (const img of visibleImages) {
-            // Skip if already in the list
             if (existingImageElements.has(img)) continue;
 
             const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
             const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
                                          currentChapterMatch[0] === imageChapterMatch[0];
 
-            if (img.isConnected &&
-                managedElements.has(img) &&
-                img.naturalHeight > 0 &&
-                isFromCurrentChapter) {
-
+            if (img.isConnected && managedElements.has(img) && img.naturalHeight > 0 && isFromCurrentChapter) {
                 const rect = img.getBoundingClientRect();
                 const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
 
@@ -2796,7 +2425,6 @@ function getValidImagesForExport() {
             }
         }
     }
-    // Sort by page number
     validImages.sort((a, b) => a.pageNumber - b.pageNumber);
     return validImages;
 }
@@ -2893,28 +2521,27 @@ function getValidImagesForExport() {
         UI.focusScaleMultiplierInput.value = settings.focusScaleMultiplier;
         UI.sitesConfigTextarea.value = settings.sites.map(s =>[s.urlPattern, s.overflowFixSelector, ...(s.imageContainerSelectors || []), s.contentRootSelector].join('; ')).join('\n');
 
-        // NEW: Initialize mobile mode UI & apply class
         UI.mobileModeCheckbox.checked = settings.mobileMode;
         UI.mobileEditMergingCheckbox.checked = settings.mobileEditMerging;
-
         document.body.classList.toggle('mobile-mode', settings.mobileMode);
 
         reinitializeScript();
         setupNavigationObserver();
         setupPageChangeDetection();
 
+        // Optimized Background Garbage Collection (Checks for dead DOM references)
         setInterval(() => {
-            cleanupDisconnectedImages();
-        }, 2000);
-
-        setInterval(() => {
+            let triggerReset = false;
             for (const [img] of managedElements.entries()) {
                 if (!img.isConnected) {
-                    logDebug("Detected disconnected image during periodic check - triggering full reset.");
-                    fullCleanupAndReset();
-                    setTimeout(reinitializeScript, 250);
+                    triggerReset = true;
                     break;
                 }
+            }
+            if (triggerReset) {
+                logDebug("Detected disconnected image during periodic check - triggering full reset.");
+                fullCleanupAndReset();
+                setTimeout(reinitializeScript, 250);
             }
         }, 5000);
     }
