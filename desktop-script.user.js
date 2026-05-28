@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining - Refractored
 // @namespace    http://tampermonkey.net/
-// @version      24.6.11
+// @version      24.6.12
 // @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly. Performance improvements included.
 // @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu & Native Scroll Fix
 // @match        *://127.0.0.1:4567/*
@@ -2077,20 +2077,21 @@ function createUI() {
 
         const textElements = document.querySelectorAll(selectors.join(', '));
 
-        // Loop using standard 'for' loop (faster than forEach for large NodeLists)
         for(let i = 0; i < textElements.length; i++) {
             const el = textElements[i];
 
             if (el.closest('.MuiDialogContent-root') || el.childElementCount > 0) continue;
 
+            // FIX: Use textContent instead of innerText! innerText returns "" when visibility is hidden.
+            const text = el.textContent.trim();
+
             if (el.classList.contains('yomitan-ghost-text')) {
-                if (el.innerText !== el.getAttribute('data-text')) {
-                    el.setAttribute('data-text', el.innerText);
+                if (text && text !== el.getAttribute('data-text')) {
+                    el.setAttribute('data-text', text);
                 }
                 continue;
             }
 
-            const text = el.innerText.trim();
             if (text.length === 0) continue;
 
             el.setAttribute('data-text', text);
@@ -2098,10 +2099,16 @@ function createUI() {
         }
 
         // --- PART B: IMAGE ALT TEXT (Aggressive Wipe) ---
-        // Native CSS selector filters out empty alts before JS even runs (Huge performance win)
         const images = document.querySelectorAll('img[alt]:not([alt=""])');
         for(let i = 0; i < images.length; i++) {
             images[i].removeAttribute('alt');
+        }
+
+        // --- PART C: ARIA-LABEL WIPE (Yomitan scans these) ---
+        // Strip the aria-labels from MuiBox-root elements where Suwayomi hides page numbers
+        const ariaBoxes = document.querySelectorAll('.MuiBox-root[aria-label]:not([aria-label=""])');
+        for(let i = 0; i < ariaBoxes.length; i++) {
+            ariaBoxes[i].removeAttribute('aria-label');
         }
     }
 
