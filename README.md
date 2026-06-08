@@ -1,12 +1,21 @@
 ## Personal changes:
-OCR:
-*   Added Manga-OCR paired with Meiki Text detect for better local OCR  
--Download  **[meiki.text.detect.small.v0.onnx](https://huggingface.co/rtr46/meiki.text.detect.v0/tree/main)** and put in the `ocr-server` folder  
--Run this command in the `ocr-server` folder:  
- 
-    > ```
-    > uv run server.py -e=meikimanga
-    > ```
+
+**OCR:**
+* Added Manga-OCR engine with a fine-tuned Manga-OCR model paired with Meiki Text Detection for better local OCR. Models will automatically download on first run. 
+  * Link to Meiki model [here](https://huggingface.co/rtr46/meiki.text.detect.v0) 
+  * Link to CPU fine-tune [here](https://huggingface.co/JustANormalTinkerer/manga-ocr-finetuned)
+  * Link to DirectML fine-tune [here](https://huggingface.co/NorwayFish/manga-ocr-finetuned)  
+
+* For the **CPU version**, run this command in the `ocr-server` folder:  
+  ```bash
+  uv run server.py -e=mangaocr
+  ```
+
+* For the much faster **DirectML version** (**Windows-only**; runs on Windows-compatible NVIDIA, AMD, and Intel GPUs), run this in the `ocr-server` folder:  
+  ```bash
+  uv run server.py -e=mangaocrdirectml
+  ```  
+    
 *   Added Oneocr engine with image preprocessing to improve OCR results and furigana filter  
 -Resizes image to a width of 2500px -> Sharpen -> OCR -> Filter furigana  
 -Run this command in the `ocr-server` folder:  
