@@ -592,12 +592,24 @@ class MangaOCR(Engine):
             print(f"[Error] Failed to initialize Manga OCR: {e}")
             raise
 
+    def _apply_gamma(self, image: np.ndarray, gamma: float) -> np.ndarray:
+        if gamma == 1.0:
+            return image
+        inv_gamma = 1.0 / gamma
+        table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+        return cv2.LUT(image, table)
+
     def _resize(self, image: np.ndarray, w: int, h: int):
         return cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
 
     def _detect_text_boxes(self, image: np.ndarray):
         img_height, img_width = image.shape[:2]
-        resized_image = self._resize(image, self.detect_width, self.detect_height)
+        
+        # Sweep Winner Optimization: Gamma 1.5 washes out screentone noise before detection
+        processed_img = self._apply_gamma(image, 1.5)
+        
+        # Sweep Winner Optimization: STRETCH mode + LINEAR interpolation
+        resized_image = self._resize(processed_img, self.detect_width, self.detect_height)
         
         img_normalized = resized_image.astype(np.float32) / 255.0
         img_transposed = np.transpose(img_normalized, (2, 0, 1))
@@ -627,10 +639,17 @@ class MangaOCR(Engine):
                 final_x_max = int(x_max)
                 final_y_max = int(y_max)
                 
+                # Sweep Winner Optimization: DYNPADON
+                # Calculates 2.5% of box height to provide intelligent top/bottom headroom 
+                box_height = final_y_max - final_y_min
+                top_pad = max(3, min(6, int(box_height * 0.025)))
+                bottom_pad = max(3, min(6, int(box_height * 0.025)))
+                
+                final_y_min = max(0, final_y_min - top_pad)
+                final_y_max = min(img_height, final_y_max + bottom_pad)
+                
                 final_x_min = max(0, final_x_min + 0)
                 final_x_max = min(img_width, final_x_max + 4)
-                final_y_min = max(0, final_y_min - 2)
-                final_y_max = min(img_height, final_y_max + 4)
                 
                 if final_x_min < final_x_max and final_y_min < final_y_max:
                     original_boxes.append((final_x_min, final_y_min, final_x_max, final_y_max))
@@ -654,6 +673,7 @@ class MangaOCR(Engine):
         
         crop_data = []
         for x1, y1, x2, y2 in boxes:
+            # Sweep Winner Optimization: OCR0 (No extra white padding yields the highest text clarity)
             crop = img.crop((x1, y1, x2, y2))
             if crop.width >= 10 and crop.height >= 10:
                 crop = crop.convert("L").convert("RGB")
@@ -718,7 +738,7 @@ class MangaOCR(Engine):
                 
         print(f"[MeikiMangaOCR] Successfully processed {len(bubbles)} text regions")
         return bubbles
-        
+
 
 class MangaOCRDirectML(Engine):
     """
@@ -935,12 +955,24 @@ class MangaOCRDirectML(Engine):
             print(f"[Warning] Preprocessing failed: {e}")
             return img
 
+    def _apply_gamma(self, image: np.ndarray, gamma: float) -> np.ndarray:
+        if gamma == 1.0:
+            return image
+        inv_gamma = 1.0 / gamma
+        table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in np.arange(0, 256)]).astype("uint8")
+        return cv2.LUT(image, table)
+
     def _resize(self, image: np.ndarray, w: int, h: int):
         return cv2.resize(image, (w, h), interpolation=cv2.INTER_LINEAR)
 
     def _detect_text_boxes(self, image: np.ndarray):
         img_height, img_width = image.shape[:2]
-        resized_image = self._resize(image, self.detect_width, self.detect_height)
+        
+        # Sweep Winner Optimization: Gamma 1.5 washes out screentone noise before detection
+        processed_img = self._apply_gamma(image, 1.5)
+        
+        # Sweep Winner Optimization: STRETCH mode + LINEAR interpolation
+        resized_image = self._resize(processed_img, self.detect_width, self.detect_height)
         
         # CPU Preprocessing
         img_normalized = resized_image.astype(np.float32) / 255.0
@@ -970,11 +1002,17 @@ class MangaOCRDirectML(Engine):
                 final_x_max = int(x_max)
                 final_y_max = int(y_max)
                 
-                # Offsets
+                # Sweep Winner Optimization: DYNPADON
+                # Calculates 2.5% of box height to provide intelligent top/bottom headroom 
+                box_height = final_y_max - final_y_min
+                top_pad = max(3, min(6, int(box_height * 0.025)))
+                bottom_pad = max(3, min(6, int(box_height * 0.025)))
+                
+                final_y_min = max(0, final_y_min - top_pad)
+                final_y_max = min(img_height, final_y_max + bottom_pad)
+                
                 final_x_min = max(0, final_x_min + 0)
                 final_x_max = min(img_width, final_x_max + 4)
-                final_y_min = max(0, final_y_min - 2)
-                final_y_max = min(img_height, final_y_max + 4)
                 
                 if final_x_min < final_x_max and final_y_min < final_y_max:
                     original_boxes.append((final_x_min, final_y_min, final_x_max, final_y_max))
@@ -1005,6 +1043,7 @@ class MangaOCRDirectML(Engine):
         crop_data =[] 
         
         for x1, y1, x2, y2 in boxes:
+            # Sweep Winner Optimization: OCR0 (No extra white padding yields the highest text clarity)
             crop = processed_img.crop((x1, y1, x2, y2))
             if crop.width >= 10 and crop.height >= 10:
                 crop_data.append((crop, (x1, y1, x2, y2)))
