@@ -519,14 +519,13 @@ class GoogleLens(Engine):
 class MangaOCR(Engine):
     """
     OCR engine that uses Meiki text detection on CPU to find text boxes,
-    then runs Manga OCR on batched detected regions.
+    then runs default Manga OCR on batched detected regions.
     """
     
     def __init__(
         self, 
         model_path: str = "meiki.text.detect.v0.1.960x544.onnx",
         confidence_threshold: float = 0.4,
-        pretrained_model_name_or_path: str = "mangaocr", # Updated default to mangaocr
         force_cpu: bool = True
     ):
         self.detect_width = 960
@@ -572,36 +571,7 @@ class MangaOCR(Engine):
             print(f"[Error] Failed to load Meiki text detection model: {e}")
             raise
         
-        # 2. Resolve & Download PyTorch OCR Model files (JustANormalTinkerer safetensors repo)
-        if os.path.isabs(pretrained_model_name_or_path):
-            local_ocr_path = pretrained_model_name_or_path
-        else:
-            local_ocr_path = os.path.join(models_dir, pretrained_model_name_or_path)
-            
-        os.makedirs(local_ocr_path, exist_ok=True)
-
-        required_ocr_files = [
-            "config.json",
-            "generation_config.json",
-            "model.safetensors",
-            "preprocessor_config.json",
-            "tokenizer_config.json",
-            "vocab.txt"
-        ]
-
-        # Verify and download required files (removes the optional check that caused the 404 warning)
-        print(f"[MeikiMangaOCR] Verifying OCR dependencies in: {local_ocr_path}")
-        for file in required_ocr_files:
-            file_path = os.path.join(local_ocr_path, file)
-            if not os.path.exists(file_path):
-                print(f"[MeikiMangaOCR] File '{file}' not found. Downloading from Hugging Face...")
-                hf_hub_download(
-                    repo_id="JustANormalTinkerer/manga-ocr-finetuned",
-                    filename=file,
-                    local_dir=local_ocr_path
-                )
-
-        # 3. Initialize standard manga-ocr using local files
+        # 2. Initialize default manga-ocr
         try:
             from manga_ocr import MangaOcr as MOCR
             import logging
@@ -610,10 +580,10 @@ class MangaOCR(Engine):
             logger.disable('manga_ocr')
             logging.getLogger('transformers').setLevel(logging.ERROR)
             
-            # Loads directly from your models/mangaocr directory
-            self.manga_ocr = MOCR(local_ocr_path, force_cpu)
-            print(f"[MeikiMangaOCR] Loaded Manga OCR model from: {local_ocr_path} "
-                  f"(Device: CPU, Batch Size: {self.BATCH_SIZE})")
+            # Loads the default model ('kha-white/manga-ocr-base')
+            self.manga_ocr = MOCR(force_cpu=force_cpu)
+            print(f"[MeikiMangaOCR] Loaded default Manga OCR model "
+                  f"(Device: {'CPU' if force_cpu else 'GPU'}, Batch Size: {self.BATCH_SIZE})")
                   
         except ImportError as e:
             print(f"[Error] manga-ocr not installed: {e}")
@@ -761,7 +731,7 @@ class MangaOCRDirectML(Engine):
         self, 
         model_path: str = "meiki.text.detect.v0.1.960x544.onnx",
         confidence_threshold: float = 0.4,
-        pretrained_model_name_or_path: str = "mangaocronnx", # Changed default to mangaocronnx
+        pretrained_model_name_or_path: str = "mangaocronnx", 
     ):
         self.ENABLE_PREPROCESSING = False
         self.ENABLE_UPSCALING = False
@@ -808,7 +778,6 @@ class MangaOCRDirectML(Engine):
             )
 
         # 2. Resolve & Download ONNX OCR Model files
-        # Resolves to 'models/mangaocronnx' (or matching absolute folder if provided)
         if os.path.isabs(pretrained_model_name_or_path):
             local_ocr_path = pretrained_model_name_or_path
         else:
@@ -816,27 +785,50 @@ class MangaOCRDirectML(Engine):
             
         os.makedirs(local_ocr_path, exist_ok=True)
 
-        # Define the exact file structure required by your ONNX pipeline configuration
+        # Map out files and their respective subfolders in the repo
         required_ocr_files = [
-            "config.json",
-            "decoder_model.onnx",
-            "encoder_model.onnx",
-            "generation_config.json",
-            "preprocessor_config.json",
-            "tokenizer.json",
-            "vocab.txt"
+            ("config.json", None),
+            ("generation_config.json", None),
+            ("preprocessor_config.json", None),
+            ("special_tokens_map.json", None),
+            ("tokenizer.json", None),
+            ("tokenizer_config.json", None),
+            ("vocab.txt", None),
+            ("encoder_model.onnx", "onnx"),
+            ("decoder_model_merged.onnx", "onnx")
         ]
 
         print(f"[MeikiMangaOCROnnx] Verifying ONNX OCR dependencies in: {local_ocr_path}")
-        for file in required_ocr_files:
-            file_path = os.path.join(local_ocr_path, file)
+        for file_name, subfolder in required_ocr_files:
+            file_path = os.path.join(local_ocr_path, file_name)
+            
             if not os.path.exists(file_path):
-                print(f"[MeikiMangaOCROnnx] File '{file}' not found. Downloading from Hugging Face...")
-                hf_hub_download(
-                    repo_id="NorwayFish/manga-ocr-finetuned",
-                    filename=file,
-                    local_dir=local_ocr_path
-                )
+                print(f"[MeikiMangaOCROnnx] File '{file_name}' not found. Downloading from Hugging Face...")
+                if subfolder:
+                    # Download from subfolder
+                    hf_file_path = f"{subfolder}/{file_name}"
+                    downloaded_path = hf_hub_download(
+                        repo_id="xingliao/manga-ocr-onnx-full",
+                        filename=hf_file_path,
+                        local_dir=local_ocr_path
+                    )
+                    
+                    # Inline import to prevent NameError if missing from file header
+                    import shutil
+                    shutil.move(downloaded_path, file_path)
+                    
+                    # Cleanup empty 'onnx' subfolder directory
+                    try:
+                        os.rmdir(os.path.dirname(downloaded_path))
+                    except OSError:
+                        pass
+                else:
+                    # Standard root file download
+                    hf_hub_download(
+                        repo_id="xingliao/manga-ocr-onnx-full",
+                        filename=file_name,
+                        local_dir=local_ocr_path
+                    )
 
         self.ocr_model_source = local_ocr_path
 
@@ -844,7 +836,6 @@ class MangaOCRDirectML(Engine):
         self._load_models()
 
         # Start the background monitor thread
-        # daemon=True ensures this thread dies when the main program exits
         monitor_thread = threading.Thread(target=self._maintenance_loop, daemon=True)
         monitor_thread.start()
 
@@ -871,26 +862,22 @@ class MangaOCRDirectML(Engine):
 
         # 2. Initialize ONNX Manga OCR Model (DirectML)
         try:
-            from transformers import BertJapaneseTokenizer, AutoImageProcessor, TrOCRProcessor
+            from transformers import TrOCRProcessor
             from optimum.onnxruntime import ORTModelForVision2Seq
             
             sess_options = ort.SessionOptions()
             sess_options.log_severity_level = 3
             sess_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-            # Instantiate tokenizer and processor
-            print(f"[MeikiMangaOCROnnx] Instantiating tokenizer and processor...")
-            tokenizer = BertJapaneseTokenizer.from_pretrained(self.ocr_model_source)
-            image_processor = AutoImageProcessor.from_pretrained(self.ocr_model_source, use_fast=False)
-            self.processor = TrOCRProcessor(image_processor=image_processor, tokenizer=tokenizer)
+            # Loads processor directly with use_fast=True
+            self.processor = TrOCRProcessor.from_pretrained(self.ocr_model_source, use_fast=True)
             
-            # Load the ONNX model using your exact file configurations
             self.recognition_model = ORTModelForVision2Seq.from_pretrained(
                 self.ocr_model_source,
                 provider="DmlExecutionProvider", 
-                use_cache=False,       # <--- CRITICAL: Disabled to match local file structure
-                use_merged=False,      # <--- CRITICAL: Disabled to match local file structure
-                use_io_binding=False,  # Avoids CPU-GPU data transfer overhead
+                #use_cache=False,        # <--- CRITICAL: Enables KV Caching
+                use_merged=True,         # <--- FORCE Optimum to recognize the merged file
+                use_io_binding=False,    # <--- OPTIMIZATION: Avoids CPU-GPU data transfer overhead
                 export=False,
                 session_options=sess_options
             )
@@ -1008,6 +995,7 @@ class MangaOCRDirectML(Engine):
         processed_img = self.preprocess_image(img)
         processed_width, processed_height = processed_img.size
         
+        # Convert directly to RGB NumPy array from PIL to minimize conversion overhead
         img_array = np.array(processed_img)
         
         boxes = self._detect_text_boxes(img_array)
@@ -1045,7 +1033,7 @@ class MangaOCRDirectML(Engine):
                         pixel_values,
                         max_new_tokens=40,
                         num_beams=1,
-                        use_cache=False,
+                        use_cache=False,  # <--- Bypasses caching setup exactly as referenced
                     )
                 
                 batch_texts = self.processor.batch_decode(generated_ids, skip_special_tokens=True)
