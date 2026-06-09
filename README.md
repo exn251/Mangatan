@@ -1,10 +1,9 @@
 ## Personal changes:
 
 **OCR:**
-* Added Manga-OCR engine with a fine-tuned Manga-OCR model paired with Meiki Text Detection for better local OCR. Models will automatically download on first run. 
+* Added Manga-OCR engine paired with Meiki Text Detection for better local OCR. Models will automatically download on first run. 
   * Link to Meiki model [here](https://huggingface.co/rtr46/meiki.text.detect.v0) 
-  * Link to CPU fine-tune [here](https://huggingface.co/JustANormalTinkerer/manga-ocr-finetuned)
-  * Link to DirectML fine-tune [here](https://huggingface.co/NorwayFish/manga-ocr-finetuned)  
+  * Link to ONNX Manga-ocr model for DirectML  [here](https://huggingface.co/xingliao/manga-ocr-onnx-full)  
 
 * For the **CPU version**, run this command in the `ocr-server` folder:  
   ```bash
