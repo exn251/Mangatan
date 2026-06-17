@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Mangatan - Better Text Boxes & Mining - Refractored
 // @namespace    http://tampermonkey.net/
-// @version      24.6.12
+// @version      24.6.13
 // @description  Adds a stable, inline OCR button and modifier-key merging. Now includes a superior CSS blend mode for perfect text contrast on any background. This version includes significant stability improvements to the hover-to-show overlay logic, eliminating flickering. Includes fixes for font size calculation, merged box containment, widow/orphan prevention, and resilience against OCR errors causing text overflow. Now with editable OCR text boxes. Fixed image export bug where wrong chapter images were being captured. Includes duplicate punctuation removal. Fixed merge selection reset on mouse leave. Added multi-image selector for dual-page layouts. NEW: FAB Menu with Toggleable Edit/Merge modes and Pickaxe Anki Icon. Menu now auto-collapses on selection. NEW: Smart Hybrid Input system restores Yomitan & Native Scroll/Swipe perfectly. Performance improvements included.
 // @author       1Selxo (Original) & Gemini (Refactoring & PC-Centric Features) & Modified for OCR Error Resilience & Editable Text & Image Export Fix & Punctuation Fix & Merge Stability & Multi-Image Selector & FAB Menu & Native Scroll Fix
 // @match        *://127.0.0.1:4567/*
@@ -91,11 +91,6 @@ let settings = {
         activeEditBox: null,
         originalText: null,
         originalStyles: null
-    };
-
-    const punctuationConfig = {
-        originalSetAttribute: null,
-        originalSetTextContent: null
     };
 
     const logDebug = (message) => {
@@ -472,13 +467,6 @@ function calculateAndApplyStylesForSingleBox(box, imgRect) {
     if (requiredFontSize > finalFontSize) {
         measurementSpan.style.fontSize = `${requiredFontSize * multiplier}px`;
         measurementSpan.style.writingMode = isVertical ? 'vertical-rl' : 'horizontal-tb';
-        measurementSpan.style.whiteSpace = isMerged ? 'pre' : 'normal';
-
-        if (isMerged) {
-            measurementSpan.innerHTML = text.replace(/\u200B/g, "<br>");
-        } else {
-            measurementSpan.textContent = text;
-        }
 
         // Adjust box dimensions (add 10% padding)
         const scaledRequiredWidth = measurementSpan.offsetWidth * 1.1;
@@ -695,7 +683,6 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
     overlay.appendChild(newBoxElement);
     overlay._forceRecalc = true;
     calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
-    calculateAndApplyStylesForSingleBox(newBoxElement, sourceImage.getBoundingClientRect());
 
     mergeState.anchorBox = null;
     overlay.classList.remove('merging');
@@ -711,7 +698,7 @@ function handleBoxMerge(targetBox, sourceBox, sourceImage, overlay) {
 }
 
 // ---------------------------------------------------------------------------
-// --- Editable Text Box Functions ---
+// --- Editable Text Box States ---
 function enterEditMode(textBox, sourceImage) {
     if (editableState.activeEditBox) return;
 
@@ -739,7 +726,6 @@ function enterEditMode(textBox, sourceImage) {
     textBox.contentEditable = 'true';
     textBox.classList.add('editing');
 
-    textBox.innerHTML = '';
     textBox.textContent = editableState.originalText.replace(/\u200B/g, "\n");
 
     Object.assign(textBox.style, {
@@ -1074,9 +1060,7 @@ function displayOcrResults(targetImg) {
     });
 
     // 4. Mobile Show & Swiping Fix
-    targetImg.addEventListener('touchstart', (e) => {
-        handleShow();
-    }, { passive: true });
+    targetImg.addEventListener('touchstart', handleShow, { passive: true });
 
     // 5. Mobile Click
     targetImg.addEventListener('click', (e) => {
@@ -1174,13 +1158,6 @@ function displayOcrResults(targetImg) {
                 width: 'auto',
                 margin: '0 auto'
             });
-            const styleSheet = document.createElement('style');
-            styleSheet.textContent = `
-                .image-selector-container::-webkit-scrollbar {
-                    display: none;
-                }
-            `;
-            document.head.appendChild(styleSheet);
             container.classList.add('image-selector-container');
 
             validImages.forEach((item, index) => {
@@ -1286,7 +1263,6 @@ function displayOcrResults(targetImg) {
 
             function cleanup() {
                 if (overlay.parentNode) document.body.removeChild(overlay);
-                if (styleSheet.parentNode) document.head.removeChild(styleSheet);
             }
         });
     }
@@ -1874,9 +1850,10 @@ function createUI() {
             min-height: 40px !important; min-width: 40px !important;
         }
 
-        /* Mobile responsive adjustments */
+        /* Mobile responsive adjustments - Consolidated and Cleaned up duplicates */
         @media (max-width: 768px) {
-            .gemini-ocr-text-box { min-width: 40px !important; min-height: 40px !important; font-size: 24px !important; }
+            .gemini-ocr-text-box { min-width: 40px !important; min-height: 40px !important; font-size: 20px !important; }
+            #gemini-ocr-settings-button, .gemini-ocr-fab-btn { width: 45px; height: 45px; font-size: 24px; }
         }
         .gemini-ocr-text-box.selected-for-merge { outline: 3px solid #f1c40f !important; outline-offset: 2px; box-shadow: 0 0 12px #f1c40f !important; z-index: 2; }
         body.ocr-brightness-light .gemini-ocr-text-box { background: rgba(var(--background), 1); color: rgba(var(--accent), 0.5); box-shadow: 0 0 0 0.1em rgba(var(--background), 1); }
@@ -1966,15 +1943,9 @@ function createUI() {
         #gemini-ocr-server-status.status-error { background-color: #c0392b; }
         #gemini-ocr-server-status.status-checking { background-color: #3498db; }
 
-        @media (max-width: 768px) {
-            .gemini-ocr-text-box { min-width: 30px; min-height: 30px; font-size: 14px !important; }
-            #gemini-ocr-settings-button, .gemini-ocr-fab-btn { width: 45px; height: 45px; font-size: 24px; }
-        }
-    `);
-
-    // Mobile-mode style block
-    GM_addStyle(`
+        /* Dynamic classes consolidated from secondary GM_addStyle calls */
         .mobile-mode .gemini-ocr-text-box { transition: none !important; animation: none !important; }
+        .image-selector-container::-webkit-scrollbar { display: none; }
     `);
 
     document.body.insertAdjacentHTML('beforeend', `
@@ -2389,7 +2360,8 @@ function getValidImagesForExport() {
     const validImages =[];
     const existingImageElements = new Set();
 
-    for (const img of recentlyHoveredImages) {
+    const checkAndAdd = (img, forceViewportCheck) => {
+        if (existingImageElements.has(img)) return;
         const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
         const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
                                      currentChapterMatch[0] === imageChapterMatch[0];
@@ -2398,38 +2370,25 @@ function getValidImagesForExport() {
             const rect = img.getBoundingClientRect();
             const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
 
-            validImages.push({
-                image: img,
-                rect: rect,
-                isInViewport: isInViewport,
-                pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
-            });
-            existingImageElements.add(img);
+            if (!forceViewportCheck || isInViewport) {
+                validImages.push({
+                    image: img,
+                    rect: rect,
+                    isInViewport: isInViewport,
+                    pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
+                });
+                existingImageElements.add(img);
+            }
         }
+    };
+
+    for (const img of recentlyHoveredImages) {
+        checkAndAdd(img, false);
     }
 
     if (validImages.length < 2) {
         for (const img of visibleImages) {
-            if (existingImageElements.has(img)) continue;
-
-            const imageChapterMatch = img.src.match(/\/manga\/\d+\/chapter\/\d+/);
-            const isFromCurrentChapter = currentChapterMatch && imageChapterMatch &&
-                                         currentChapterMatch[0] === imageChapterMatch[0];
-
-            if (img.isConnected && managedElements.has(img) && img.naturalHeight > 0 && isFromCurrentChapter) {
-                const rect = img.getBoundingClientRect();
-                const isInViewport = rect.top < window.innerHeight && rect.bottom > 0;
-
-                if (isInViewport) {
-                    validImages.push({
-                        image: img,
-                        rect: rect,
-                        isInViewport: isInViewport,
-                        pageNumber: img.src.match(/page\/(\d+)/) ? parseInt(img.src.match(/page\/(\d+)/)[1]) : -1
-                    });
-                    existingImageElements.add(img);
-                }
-            }
+            checkAndAdd(img, true);
         }
     }
     validImages.sort((a, b) => a.pageNumber - b.pageNumber);
@@ -2535,22 +2494,6 @@ function getValidImagesForExport() {
         reinitializeScript();
         setupNavigationObserver();
         setupPageChangeDetection();
-
-        // Optimized Background Garbage Collection (Checks for dead DOM references)
-        setInterval(() => {
-            let triggerReset = false;
-            for (const [img] of managedElements.entries()) {
-                if (!img.isConnected) {
-                    triggerReset = true;
-                    break;
-                }
-            }
-            if (triggerReset) {
-                logDebug("Detected disconnected image during periodic check - triggering full reset.");
-                fullCleanupAndReset();
-                setTimeout(reinitializeScript, 250);
-            }
-        }, 5000);
     }
 
     init().catch(e => console.error(`[OCR Hybrid] Fatal Initialization Error: ${e.message}`));
