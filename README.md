@@ -32,6 +32,57 @@ To ensure dictionary lookups parse smoothly across line breaks and mining works 
 
 ---
 
+## 🟪 Jiten.moe Configuration
+To enable compatibility with the **Jiten Reader** extension, configure the following settings:
+
+### 🧩 Parsing -> Extra Meta
+Add the following JSON configuration under **Parsing -> Extra Meta**:
+```json
+[
+  {
+    "host": "*://127.0.0.1:4567/manga/*",
+    "allFrames": true,
+    "parserClass": "manga-ocr-parser",
+    "parseVisibleObserver": true,
+    "addedObserver": {
+      "observeFrom": "body",
+      "checkNested": ".gemini-ocr-decoupled-overlay",
+      "notifyFor": ".gemini-ocr-text-box"
+    }
+  }
+]
+```
+
+### 🎨 Appearance -> Advanced CSS Overrides -> Custom Word CSS
+Add the following styles under **Appearance -> Advanced CSS Overrides -> Custom Word CSS**:
+```css
+/* 1. Force the entire text box to stay 100% transparent unless hovered or clicked */
+.manga-ocr-parser .gemini-ocr-text-box:not(:hover):not(.manual-highlight) {
+    opacity: 0 !important;
+}
+
+/* 2. Only fix the layout when the text box is actively hovered or clicked */
+.manga-ocr-parser .gemini-ocr-text-box:hover,
+.manga-ocr-parser .gemini-ocr-text-box.manual-highlight {
+    display: block !important;
+    opacity: 1 !important;
+}
+
+/* 3. Force vertical text boxes to use proper Japanese Gothic fonts and a default mixed orientation */
+.manga-ocr-parser .gemini-ocr-text-vertical {
+    text-orientation: mixed !important;
+    font-family: "Yu Gothic", "MS Gothic", "Meiryo", "Hiragino Kaku Gothic Pro", "Hiragino Sans", "Noto Sans JP", sans-serif !important;
+}
+
+/* 4. Force Jiten parsed words and punctuation to render upright (fixes single ? and !) */
+.manga-ocr-parser .gemini-ocr-text-vertical .jiten-word {
+    text-orientation: upright !important;
+} 
+```
+
+---
+
+
 ## Key Features & Recent Updates
 
 ### 🔍 OCR Engine Selection (Background Server)
